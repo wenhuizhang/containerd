@@ -29,7 +29,26 @@ make
 
 root@n223-247-006:~/containerd/bin# ls
 containerd  containerd-shim  containerd-shim-runc-v1  containerd-shim-runc-v2  containerd-stress  ctr
+
+cp ./* /usr/local/bin/
+
+
+wget https://github.com/containernetworking/plugins/releases/download/v1.2.0/cni-plugins-linux-amd64-v1.2.0.tgz
+mkdir -p /opt/cni/bin
+tar Cxzvf /opt/cni/bin  cni-plugins-linux-amd64-v1.2.0.tgz 
+
+cd /usr/lib/systemd/system
+wget https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
+systemctl daemon-reload
+systemctl enable --now containerd
+
+cd - 
+./ctr images pull docker.io/library/redis:alpine
 ```
+
+
+
+
 
 ## Announcements
 
