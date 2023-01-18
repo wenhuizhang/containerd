@@ -37,6 +37,10 @@ wget https://github.com/containernetworking/plugins/releases/download/v1.2.0/cni
 mkdir -p /opt/cni/bin
 tar Cxzvf /opt/cni/bin  cni-plugins-linux-amd64-v1.2.0.tgz 
 
+vim ~/.bashrc 
+export PATH=$PATH:/usr/bin/go:/opt/cni/bin:/usr/local/bin/
+source ~/.bashrc
+
 cd /usr/lib/systemd/system
 wget https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
 systemctl daemon-reload
