@@ -9,11 +9,27 @@
 
 containerd is an industry-standard container runtime with an emphasis on simplicity, robustness, and portability. It is available as a daemon for Linux and Windows, which can manage the complete container lifecycle of its host system: image transfer and storage, container execution and supervision, low-level storage and network attachments, etc.
 
-containerd is a member of CNCF with ['graduated'](https://landscape.cncf.io/?selected=containerd) status.
 
-containerd is designed to be embedded into a larger system, rather than being used directly by developers or end-users.
 
-![architecture](docs/historical/design/architecture.png)
+## Install
+
+```
+wget https://go.dev/dl/go1.19.5.linux-amd64.tar.gz
+rm -rf /usr/bin/go && tar -C /usr/bin -xzf go1.19.5.linux-amd64.tar.gz 
+
+go version
+
+vim ~/.bashrc 
+export PATH=$PATH:/usr/bin/go
+source ~/.bashrc
+
+
+make
+
+
+root@n223-247-006:~/containerd/bin# ls
+containerd  containerd-shim  containerd-shim-runc-v1  containerd-shim-runc-v2  containerd-stress  ctr
+```
 
 ## Announcements
 
