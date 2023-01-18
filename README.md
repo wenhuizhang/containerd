@@ -44,6 +44,7 @@ systemctl enable --now containerd
 
 cd - 
 ./ctr images pull docker.io/library/redis:alpine
+ctr run docker.io/library/redis:alpine redis
 ```
 
 
