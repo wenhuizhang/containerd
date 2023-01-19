@@ -54,6 +54,8 @@ cd -
 ./ctr images pull  docker.io/library/nginx:latest
 ./ctr run docker.io/library/nginx:latest ngnix
 
+./ctr images pull  docker.io/library/ubuntu:latest ubuntu
+./ctr run docker.io/library/ubuntu:latest ubuntu
 
 ctr image list
 ctr containers list
