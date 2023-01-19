@@ -59,6 +59,19 @@ cd -
 
 ctr image list
 ctr containers list
+
+
+ctr container create -t docker.io/library/nginx:latest nginx01
+ctr task start -d nginx01
+ctr task list
+ctr task attach nginx01
+ctr task exec -t --exec-id bash01 nginx01 bash
+
+
+ctr task kill -9 nginx01
+ctr task rm -f nginx01
+ctr container rm nginx01
+
 ```
 
 
