@@ -43,7 +43,12 @@ export PATH=$PATH:/usr/bin/go/bin:/opt/cni/bin:/usr/local/bin/:/usr/local/sbin/r
 source ~/.bashrc
 
 
-
+git clone https://github.com/wenhuizhang/runc.git
+cd runc/
+git checkout v1.0.2
+apt-get install libseccomp-dev
+make
+make install
 
 
 
