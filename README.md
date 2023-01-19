@@ -85,6 +85,21 @@ ctr container rm nginx01
 
 ```
 
+# Snapshot
+
+snapshots located at: 
+```
+/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/
+```
+
+various types of snapshot:
+```
+root@n223-247-006:~/containerd/bin# ls /var/lib/containerd/
+io.containerd.content.v1.content  io.containerd.runtime.v2.task        io.containerd.snapshotter.v1.overlayfs
+io.containerd.metadata.v1.bolt    io.containerd.snapshotter.v1.btrfs   tmpmounts
+io.containerd.runtime.v1.linux    io.containerd.snapshotter.v1.native
+```
+
 # CRIU
 
 ```
