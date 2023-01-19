@@ -85,7 +85,19 @@ ctr container rm nginx01
 
 ```
 
+# CRIU
 
+```
+root@n223-247-006:~/containerd/bin# ctr task start -d redis
+root@n223-247-006:~/containerd/bin# ctr task list 
+TASK       PID        STATUS    
+nginx01    2490107    RUNNING
+redis      2915345    RUNNING
+root@n223-247-006:~/containerd/bin# ./ctr container checkpoint redis redis-snap
+ctr: image "redis-snap": already exists
+root@n223-247-006:~/containerd/bin# ./ctr container restore redis01 redis-snap
+ctr: media type not found
+```
 
 
 
