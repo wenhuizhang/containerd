@@ -20,7 +20,8 @@ rm -rf /usr/bin/go && tar -C /usr/bin -xzf go1.19.5.linux-amd64.tar.gz
 go version
 
 vim ~/.bashrc 
-export PATH=$PATH:/usr/bin/go
+export PATH=$PATH:/usr/bin/go/bin
+export GOPATH=/usr/bin/go
 source ~/.bashrc
 
 
@@ -38,7 +39,6 @@ mkdir -p /opt/cni/bin
 tar Cxzvf /opt/cni/bin  cni-plugins-linux-amd64-v1.2.0.tgz 
 
 vim ~/.bashrc 
-export GOPATH=/usr/bin/go
 export PATH=$PATH:/usr/bin/go/bin:/opt/cni/bin:/usr/local/bin/:/usr/local/sbin/runc
 source ~/.bashrc
 
