@@ -109,9 +109,18 @@ TASK       PID        STATUS
 nginx01    2490107    RUNNING
 redis      2915345    RUNNING
 root@n223-247-006:~/containerd/bin# ./ctr container checkpoint redis redis-snap
-ctr: image "redis-snap": already exists
+root@n223-247-006:~/containerd/bin# ./ctr c checkpoint --rw --task redis checkpoint/redis:20230124
+
 root@n223-247-006:~/containerd/bin# ./ctr container restore redis01 redis-snap
 ctr: media type not found
+
+
+
+root@n223-247-006:~# ctr c restore redis-debug checkpoint/redis:20230124
+start container %v
+ 1674631925231914736
+create %v
+ 1674631925253534071
 ```
 
 
