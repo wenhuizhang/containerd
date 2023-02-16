@@ -108,12 +108,16 @@ root@n223-247-006:~/containerd/bin# ctr task list
 TASK       PID        STATUS    
 nginx01    2490107    RUNNING
 redis      2915345    RUNNING
-root@n223-247-006:~/containerd/bin# ./ctr container checkpoint redis redis-snap
+root@n223-247-006:~/containerd/bin# ./ctr container checkpoint --live redis redis-snap
 
-root@n223-247-006:~/containerd/bin# ./ctr container restore redis01 redis-snap
+root@n223-247-006:~/containerd/bin# ./ctr container restore --live redis01 redis-snap
 ctr: media type not found
 
-root@n223-247-006:~/containerd/bin# ./ctr c checkpoint --rw --task redis checkpoint/redis:20230124
+root@n223-247-006:~/containerd/bin# ctr task kill redis-snap
+root@n223-247-006:~/containerd/bin# ctr task rm redis-snap
+root@n223-247-006:~/containerd/bin# ctr c rm redis-snap
+
+root@n223-247-006:~/containerd/bin# ./ctr c checkpoint --rw --task --live redis checkpoint/redis:20230124
 
 root@n223-247-006:~# ctr c restore redis02 checkpoint/redis:20230124
 start container %v
