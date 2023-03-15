@@ -24,7 +24,7 @@ export PATH=$PATH:/usr/bin/go/bin
 export GOPATH=/usr/bin/go
 source ~/.bashrc
 
-
+apt-get install libbtrfs-dev
 make
 
 
