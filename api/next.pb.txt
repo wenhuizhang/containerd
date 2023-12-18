@@ -49,7 +49,7 @@ file {
     json_name: "fieldpath"
   }
   options {
-    go_package: "github.com/containerd/containerd/protobuf/plugin"
+    go_package: "github.com/containerd/containerd/v2/protobuf/plugin"
   }
 }
 file {
@@ -163,7 +163,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/events;events"
+    go_package: "github.com/containerd/containerd/v2/api/events;events"
     63300: 1
   }
   syntax: "proto3"
@@ -183,7 +183,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/events;events"
+    go_package: "github.com/containerd/containerd/v2/api/events;events"
     63300: 1
   }
   syntax: "proto3"
@@ -279,7 +279,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/events;events"
+    go_package: "github.com/containerd/containerd/v2/api/events;events"
     63300: 1
   }
   syntax: "proto3"
@@ -375,8 +375,93 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/events;events"
+    go_package: "github.com/containerd/containerd/v2/api/events;events"
     63300: 1
+  }
+  syntax: "proto3"
+}
+file {
+  name: "google/protobuf/timestamp.proto"
+  package: "google.protobuf"
+  message_type {
+    name: "Timestamp"
+    field {
+      name: "seconds"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_INT64
+      json_name: "seconds"
+    }
+    field {
+      name: "nanos"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_INT32
+      json_name: "nanos"
+    }
+  }
+  options {
+    java_package: "com.google.protobuf"
+    java_outer_classname: "TimestampProto"
+    java_multiple_files: true
+    go_package: "google.golang.org/protobuf/types/known/timestamppb"
+    cc_enable_arenas: true
+    objc_class_prefix: "GPB"
+    csharp_namespace: "Google.Protobuf.WellKnownTypes"
+  }
+  syntax: "proto3"
+}
+file {
+  name: "github.com/containerd/containerd/api/events/sandbox.proto"
+  package: "containerd.events"
+  dependency: "google/protobuf/timestamp.proto"
+  message_type {
+    name: "SandboxCreate"
+    field {
+      name: "sandbox_id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "sandboxId"
+    }
+  }
+  message_type {
+    name: "SandboxStart"
+    field {
+      name: "sandbox_id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "sandboxId"
+    }
+  }
+  message_type {
+    name: "SandboxExit"
+    field {
+      name: "sandbox_id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "sandboxId"
+    }
+    field {
+      name: "exit_status"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT32
+      json_name: "exitStatus"
+    }
+    field {
+      name: "exited_at"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".google.protobuf.Timestamp"
+      json_name: "exitedAt"
+    }
+  }
+  options {
+    go_package: "github.com/containerd/containerd/v2/api/events;events"
   }
   syntax: "proto3"
 }
@@ -450,39 +535,8 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/events;events"
+    go_package: "github.com/containerd/containerd/v2/api/events;events"
     63300: 1
-  }
-  syntax: "proto3"
-}
-file {
-  name: "google/protobuf/timestamp.proto"
-  package: "google.protobuf"
-  message_type {
-    name: "Timestamp"
-    field {
-      name: "seconds"
-      number: 1
-      label: LABEL_OPTIONAL
-      type: TYPE_INT64
-      json_name: "seconds"
-    }
-    field {
-      name: "nanos"
-      number: 2
-      label: LABEL_OPTIONAL
-      type: TYPE_INT32
-      json_name: "nanos"
-    }
-  }
-  options {
-    java_package: "com.google.protobuf"
-    java_outer_classname: "TimestampProto"
-    java_multiple_files: true
-    go_package: "google.golang.org/protobuf/types/known/timestamppb"
-    cc_enable_arenas: true
-    objc_class_prefix: "GPB"
-    csharp_namespace: "Google.Protobuf.WellKnownTypes"
   }
   syntax: "proto3"
 }
@@ -521,7 +575,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/types;types"
+    go_package: "github.com/containerd/containerd/v2/api/types;types"
   }
   syntax: "proto3"
 }
@@ -793,7 +847,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/events;events"
+    go_package: "github.com/containerd/containerd/v2/api/events;events"
     63300: 1
   }
   syntax: "proto3"
@@ -826,7 +880,43 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/types;types"
+    go_package: "github.com/containerd/containerd/v2/api/types;types"
+  }
+  syntax: "proto3"
+}
+file {
+  name: "github.com/containerd/containerd/api/types/metrics.proto"
+  package: "containerd.types"
+  dependency: "google/protobuf/any.proto"
+  dependency: "google/protobuf/timestamp.proto"
+  message_type {
+    name: "Metric"
+    field {
+      name: "timestamp"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".google.protobuf.Timestamp"
+      json_name: "timestamp"
+    }
+    field {
+      name: "id"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+    field {
+      name: "data"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".google.protobuf.Any"
+      json_name: "data"
+    }
+  }
+  options {
+    go_package: "github.com/containerd/containerd/v2/api/types;types"
   }
   syntax: "proto3"
 }
@@ -837,6 +927,7 @@ file {
   dependency: "google/protobuf/timestamp.proto"
   dependency: "github.com/containerd/containerd/api/types/mount.proto"
   dependency: "github.com/containerd/containerd/api/types/platform.proto"
+  dependency: "github.com/containerd/containerd/api/types/metrics.proto"
   message_type {
     name: "CreateSandboxRequest"
     field {
@@ -868,6 +959,41 @@ file {
       type: TYPE_MESSAGE
       type_name: ".google.protobuf.Any"
       json_name: "options"
+    }
+    field {
+      name: "netns_path"
+      number: 5
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "netnsPath"
+    }
+    field {
+      name: "annotations"
+      number: 6
+      label: LABEL_REPEATED
+      type: TYPE_MESSAGE
+      type_name: ".containerd.runtime.sandbox.v1.CreateSandboxRequest.AnnotationsEntry"
+      json_name: "annotations"
+    }
+    nested_type {
+      name: "AnnotationsEntry"
+      field {
+        name: "key"
+        number: 1
+        label: LABEL_OPTIONAL
+        type: TYPE_STRING
+        json_name: "key"
+      }
+      field {
+        name: "value"
+        number: 2
+        label: LABEL_OPTIONAL
+        type: TYPE_STRING
+        json_name: "value"
+      }
+      options {
+        map_entry: true
+      }
     }
   }
   message_type {
@@ -1039,11 +1165,11 @@ file {
   message_type {
     name: "SandboxStatusResponse"
     field {
-      name: "id"
+      name: "sandbox_id"
       number: 1
       label: LABEL_OPTIONAL
       type: TYPE_STRING
-      json_name: "id"
+      json_name: "sandboxId"
     }
     field {
       name: "pid"
@@ -1138,6 +1264,27 @@ file {
   message_type {
     name: "ShutdownSandboxResponse"
   }
+  message_type {
+    name: "SandboxMetricsRequest"
+    field {
+      name: "sandbox_id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "sandboxId"
+    }
+  }
+  message_type {
+    name: "SandboxMetricsResponse"
+    field {
+      name: "metrics"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".containerd.types.Metric"
+      json_name: "metrics"
+    }
+  }
   service {
     name: "Sandbox"
     method {
@@ -1180,9 +1327,14 @@ file {
       input_type: ".containerd.runtime.sandbox.v1.ShutdownSandboxRequest"
       output_type: ".containerd.runtime.sandbox.v1.ShutdownSandboxResponse"
     }
+    method {
+      name: "SandboxMetrics"
+      input_type: ".containerd.runtime.sandbox.v1.SandboxMetricsRequest"
+      output_type: ".containerd.runtime.sandbox.v1.SandboxMetricsResponse"
+    }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/runtime/sandbox/v1;sandbox"
+    go_package: "github.com/containerd/containerd/v2/api/runtime/sandbox/v1;sandbox"
   }
   syntax: "proto3"
 }
@@ -1329,7 +1481,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/types/task"
+    go_package: "github.com/containerd/containerd/v2/api/types/task"
   }
   syntax: "proto3"
 }
@@ -2044,7 +2196,722 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/runtime/task/v2;task"
+    go_package: "github.com/containerd/containerd/v2/api/runtime/task/v2;task"
+  }
+  syntax: "proto3"
+}
+file {
+  name: "github.com/containerd/containerd/api/runtime/task/v3/shim.proto"
+  package: "containerd.task.v3"
+  dependency: "google/protobuf/any.proto"
+  dependency: "google/protobuf/empty.proto"
+  dependency: "google/protobuf/timestamp.proto"
+  dependency: "github.com/containerd/containerd/api/types/mount.proto"
+  dependency: "github.com/containerd/containerd/api/types/task/task.proto"
+  message_type {
+    name: "CreateTaskRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+    field {
+      name: "bundle"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "bundle"
+    }
+    field {
+      name: "rootfs"
+      number: 3
+      label: LABEL_REPEATED
+      type: TYPE_MESSAGE
+      type_name: ".containerd.types.Mount"
+      json_name: "rootfs"
+    }
+    field {
+      name: "terminal"
+      number: 4
+      label: LABEL_OPTIONAL
+      type: TYPE_BOOL
+      json_name: "terminal"
+    }
+    field {
+      name: "stdin"
+      number: 5
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "stdin"
+    }
+    field {
+      name: "stdout"
+      number: 6
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "stdout"
+    }
+    field {
+      name: "stderr"
+      number: 7
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "stderr"
+    }
+    field {
+      name: "checkpoint"
+      number: 8
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "checkpoint"
+    }
+    field {
+      name: "parent_checkpoint"
+      number: 9
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "parentCheckpoint"
+    }
+    field {
+      name: "options"
+      number: 10
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".google.protobuf.Any"
+      json_name: "options"
+    }
+  }
+  message_type {
+    name: "CreateTaskResponse"
+    field {
+      name: "pid"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT32
+      json_name: "pid"
+    }
+  }
+  message_type {
+    name: "DeleteRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+    field {
+      name: "exec_id"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "execId"
+    }
+  }
+  message_type {
+    name: "DeleteResponse"
+    field {
+      name: "pid"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT32
+      json_name: "pid"
+    }
+    field {
+      name: "exit_status"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT32
+      json_name: "exitStatus"
+    }
+    field {
+      name: "exited_at"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".google.protobuf.Timestamp"
+      json_name: "exitedAt"
+    }
+  }
+  message_type {
+    name: "ExecProcessRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+    field {
+      name: "exec_id"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "execId"
+    }
+    field {
+      name: "terminal"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_BOOL
+      json_name: "terminal"
+    }
+    field {
+      name: "stdin"
+      number: 4
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "stdin"
+    }
+    field {
+      name: "stdout"
+      number: 5
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "stdout"
+    }
+    field {
+      name: "stderr"
+      number: 6
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "stderr"
+    }
+    field {
+      name: "spec"
+      number: 7
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".google.protobuf.Any"
+      json_name: "spec"
+    }
+  }
+  message_type {
+    name: "ExecProcessResponse"
+  }
+  message_type {
+    name: "ResizePtyRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+    field {
+      name: "exec_id"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "execId"
+    }
+    field {
+      name: "width"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT32
+      json_name: "width"
+    }
+    field {
+      name: "height"
+      number: 4
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT32
+      json_name: "height"
+    }
+  }
+  message_type {
+    name: "StateRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+    field {
+      name: "exec_id"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "execId"
+    }
+  }
+  message_type {
+    name: "StateResponse"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+    field {
+      name: "bundle"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "bundle"
+    }
+    field {
+      name: "pid"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT32
+      json_name: "pid"
+    }
+    field {
+      name: "status"
+      number: 4
+      label: LABEL_OPTIONAL
+      type: TYPE_ENUM
+      type_name: ".containerd.v1.types.Status"
+      json_name: "status"
+    }
+    field {
+      name: "stdin"
+      number: 5
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "stdin"
+    }
+    field {
+      name: "stdout"
+      number: 6
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "stdout"
+    }
+    field {
+      name: "stderr"
+      number: 7
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "stderr"
+    }
+    field {
+      name: "terminal"
+      number: 8
+      label: LABEL_OPTIONAL
+      type: TYPE_BOOL
+      json_name: "terminal"
+    }
+    field {
+      name: "exit_status"
+      number: 9
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT32
+      json_name: "exitStatus"
+    }
+    field {
+      name: "exited_at"
+      number: 10
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".google.protobuf.Timestamp"
+      json_name: "exitedAt"
+    }
+    field {
+      name: "exec_id"
+      number: 11
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "execId"
+    }
+  }
+  message_type {
+    name: "KillRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+    field {
+      name: "exec_id"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "execId"
+    }
+    field {
+      name: "signal"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT32
+      json_name: "signal"
+    }
+    field {
+      name: "all"
+      number: 4
+      label: LABEL_OPTIONAL
+      type: TYPE_BOOL
+      json_name: "all"
+    }
+  }
+  message_type {
+    name: "CloseIORequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+    field {
+      name: "exec_id"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "execId"
+    }
+    field {
+      name: "stdin"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_BOOL
+      json_name: "stdin"
+    }
+  }
+  message_type {
+    name: "PidsRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+  }
+  message_type {
+    name: "PidsResponse"
+    field {
+      name: "processes"
+      number: 1
+      label: LABEL_REPEATED
+      type: TYPE_MESSAGE
+      type_name: ".containerd.v1.types.ProcessInfo"
+      json_name: "processes"
+    }
+  }
+  message_type {
+    name: "CheckpointTaskRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+    field {
+      name: "path"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "path"
+    }
+    field {
+      name: "options"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".google.protobuf.Any"
+      json_name: "options"
+    }
+  }
+  message_type {
+    name: "UpdateTaskRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+    field {
+      name: "resources"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".google.protobuf.Any"
+      json_name: "resources"
+    }
+    field {
+      name: "annotations"
+      number: 3
+      label: LABEL_REPEATED
+      type: TYPE_MESSAGE
+      type_name: ".containerd.task.v3.UpdateTaskRequest.AnnotationsEntry"
+      json_name: "annotations"
+    }
+    nested_type {
+      name: "AnnotationsEntry"
+      field {
+        name: "key"
+        number: 1
+        label: LABEL_OPTIONAL
+        type: TYPE_STRING
+        json_name: "key"
+      }
+      field {
+        name: "value"
+        number: 2
+        label: LABEL_OPTIONAL
+        type: TYPE_STRING
+        json_name: "value"
+      }
+      options {
+        map_entry: true
+      }
+    }
+  }
+  message_type {
+    name: "StartRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+    field {
+      name: "exec_id"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "execId"
+    }
+  }
+  message_type {
+    name: "StartResponse"
+    field {
+      name: "pid"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT32
+      json_name: "pid"
+    }
+  }
+  message_type {
+    name: "WaitRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+    field {
+      name: "exec_id"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "execId"
+    }
+  }
+  message_type {
+    name: "WaitResponse"
+    field {
+      name: "exit_status"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT32
+      json_name: "exitStatus"
+    }
+    field {
+      name: "exited_at"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".google.protobuf.Timestamp"
+      json_name: "exitedAt"
+    }
+  }
+  message_type {
+    name: "StatsRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+  }
+  message_type {
+    name: "StatsResponse"
+    field {
+      name: "stats"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".google.protobuf.Any"
+      json_name: "stats"
+    }
+  }
+  message_type {
+    name: "ConnectRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+  }
+  message_type {
+    name: "ConnectResponse"
+    field {
+      name: "shim_pid"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT32
+      json_name: "shimPid"
+    }
+    field {
+      name: "task_pid"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_UINT32
+      json_name: "taskPid"
+    }
+    field {
+      name: "version"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "version"
+    }
+  }
+  message_type {
+    name: "ShutdownRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+    field {
+      name: "now"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_BOOL
+      json_name: "now"
+    }
+  }
+  message_type {
+    name: "PauseRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+  }
+  message_type {
+    name: "ResumeRequest"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+  }
+  service {
+    name: "Task"
+    method {
+      name: "State"
+      input_type: ".containerd.task.v3.StateRequest"
+      output_type: ".containerd.task.v3.StateResponse"
+    }
+    method {
+      name: "Create"
+      input_type: ".containerd.task.v3.CreateTaskRequest"
+      output_type: ".containerd.task.v3.CreateTaskResponse"
+    }
+    method {
+      name: "Start"
+      input_type: ".containerd.task.v3.StartRequest"
+      output_type: ".containerd.task.v3.StartResponse"
+    }
+    method {
+      name: "Delete"
+      input_type: ".containerd.task.v3.DeleteRequest"
+      output_type: ".containerd.task.v3.DeleteResponse"
+    }
+    method {
+      name: "Pids"
+      input_type: ".containerd.task.v3.PidsRequest"
+      output_type: ".containerd.task.v3.PidsResponse"
+    }
+    method {
+      name: "Pause"
+      input_type: ".containerd.task.v3.PauseRequest"
+      output_type: ".google.protobuf.Empty"
+    }
+    method {
+      name: "Resume"
+      input_type: ".containerd.task.v3.ResumeRequest"
+      output_type: ".google.protobuf.Empty"
+    }
+    method {
+      name: "Checkpoint"
+      input_type: ".containerd.task.v3.CheckpointTaskRequest"
+      output_type: ".google.protobuf.Empty"
+    }
+    method {
+      name: "Kill"
+      input_type: ".containerd.task.v3.KillRequest"
+      output_type: ".google.protobuf.Empty"
+    }
+    method {
+      name: "Exec"
+      input_type: ".containerd.task.v3.ExecProcessRequest"
+      output_type: ".google.protobuf.Empty"
+    }
+    method {
+      name: "ResizePty"
+      input_type: ".containerd.task.v3.ResizePtyRequest"
+      output_type: ".google.protobuf.Empty"
+    }
+    method {
+      name: "CloseIO"
+      input_type: ".containerd.task.v3.CloseIORequest"
+      output_type: ".google.protobuf.Empty"
+    }
+    method {
+      name: "Update"
+      input_type: ".containerd.task.v3.UpdateTaskRequest"
+      output_type: ".google.protobuf.Empty"
+    }
+    method {
+      name: "Wait"
+      input_type: ".containerd.task.v3.WaitRequest"
+      output_type: ".containerd.task.v3.WaitResponse"
+    }
+    method {
+      name: "Stats"
+      input_type: ".containerd.task.v3.StatsRequest"
+      output_type: ".containerd.task.v3.StatsResponse"
+    }
+    method {
+      name: "Connect"
+      input_type: ".containerd.task.v3.ConnectRequest"
+      output_type: ".containerd.task.v3.ConnectResponse"
+    }
+    method {
+      name: "Shutdown"
+      input_type: ".containerd.task.v3.ShutdownRequest"
+      output_type: ".google.protobuf.Empty"
+    }
+  }
+  options {
+    go_package: "github.com/containerd/containerd/v2/api/runtime/task/v3;task"
   }
   syntax: "proto3"
 }
@@ -2374,7 +3241,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/services/containers/v1;containers"
+    go_package: "github.com/containerd/containerd/v2/api/services/containers/v1;containers"
   }
   syntax: "proto3"
 }
@@ -2857,7 +3724,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/services/content/v1;content"
+    go_package: "github.com/containerd/containerd/v2/api/services/content/v1;content"
   }
   syntax: "proto3"
 }
@@ -2917,7 +3784,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/types;types"
+    go_package: "github.com/containerd/containerd/v2/api/types;types"
   }
   syntax: "proto3"
 }
@@ -2953,6 +3820,13 @@ file {
       type: TYPE_MESSAGE
       type_name: ".containerd.services.diff.v1.ApplyRequest.PayloadsEntry"
       json_name: "payloads"
+    }
+    field {
+      name: "sync_fs"
+      number: 4
+      label: LABEL_OPTIONAL
+      type: TYPE_BOOL
+      json_name: "syncFs"
     }
     nested_type {
       name: "PayloadsEntry"
@@ -3081,7 +3955,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/services/diff/v1;diff"
+    go_package: "github.com/containerd/containerd/v2/api/services/diff/v1;diff"
   }
   syntax: "proto3"
 }
@@ -3187,7 +4061,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/services/events/v1;events"
+    go_package: "github.com/containerd/containerd/v2/api/services/events/v1;events"
   }
   syntax: "proto3"
 }
@@ -3386,6 +4260,19 @@ file {
       type: TYPE_BOOL
       json_name: "sync"
     }
+    field {
+      name: "target"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".containerd.types.Descriptor"
+      oneof_index: 0
+      json_name: "target"
+      proto3_optional: true
+    }
+    oneof_decl {
+      name: "_target"
+    }
   }
   service {
     name: "Images"
@@ -3416,7 +4303,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/services/images/v1;images"
+    go_package: "github.com/containerd/containerd/v2/api/services/images/v1;images"
   }
   syntax: "proto3"
 }
@@ -3464,6 +4351,7 @@ file {
   dependency: "github.com/containerd/containerd/api/types/platform.proto"
   dependency: "google/rpc/status.proto"
   dependency: "google/protobuf/empty.proto"
+  dependency: "google/protobuf/timestamp.proto"
   message_type {
     name: "Plugin"
     field {
@@ -3583,6 +4471,39 @@ file {
       type: TYPE_UINT64
       json_name: "pidns"
     }
+    field {
+      name: "deprecations"
+      number: 4
+      label: LABEL_REPEATED
+      type: TYPE_MESSAGE
+      type_name: ".containerd.services.introspection.v1.DeprecationWarning"
+      json_name: "deprecations"
+    }
+  }
+  message_type {
+    name: "DeprecationWarning"
+    field {
+      name: "id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "id"
+    }
+    field {
+      name: "message"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "message"
+    }
+    field {
+      name: "last_occurrence"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".google.protobuf.Timestamp"
+      json_name: "lastOccurrence"
+    }
   }
   service {
     name: "Introspection"
@@ -3598,7 +4519,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/services/introspection/v1;introspection"
+    go_package: "github.com/containerd/containerd/v2/api/services/introspection/v1;introspection"
   }
   syntax: "proto3"
 }
@@ -3848,7 +4769,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/services/leases/v1;leases"
+    go_package: "github.com/containerd/containerd/v2/api/services/leases/v1;leases"
   }
   syntax: "proto3"
 }
@@ -4028,7 +4949,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/services/namespaces/v1;namespaces"
+    go_package: "github.com/containerd/containerd/v2/api/services/namespaces/v1;namespaces"
   }
   syntax: "proto3"
 }
@@ -4094,6 +5015,13 @@ file {
       type_name: ".containerd.types.Sandbox.ExtensionsEntry"
       json_name: "extensions"
     }
+    field {
+      name: "sandboxer"
+      number: 10
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "sandboxer"
+    }
     nested_type {
       name: "Runtime"
       field {
@@ -4155,7 +5083,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/types;types"
+    go_package: "github.com/containerd/containerd/v2/api/types;types"
   }
   syntax: "proto3"
 }
@@ -4167,6 +5095,7 @@ file {
   dependency: "github.com/containerd/containerd/api/types/sandbox.proto"
   dependency: "github.com/containerd/containerd/api/types/mount.proto"
   dependency: "github.com/containerd/containerd/api/types/platform.proto"
+  dependency: "github.com/containerd/containerd/api/types/metrics.proto"
   message_type {
     name: "StoreCreateRequest"
     field {
@@ -4298,6 +5227,48 @@ file {
       type_name: ".google.protobuf.Any"
       json_name: "options"
     }
+    field {
+      name: "netns_path"
+      number: 4
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "netnsPath"
+    }
+    field {
+      name: "annotations"
+      number: 5
+      label: LABEL_REPEATED
+      type: TYPE_MESSAGE
+      type_name: ".containerd.services.sandbox.v1.ControllerCreateRequest.AnnotationsEntry"
+      json_name: "annotations"
+    }
+    field {
+      name: "sandboxer"
+      number: 10
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "sandboxer"
+    }
+    nested_type {
+      name: "AnnotationsEntry"
+      field {
+        name: "key"
+        number: 1
+        label: LABEL_OPTIONAL
+        type: TYPE_STRING
+        json_name: "key"
+      }
+      field {
+        name: "value"
+        number: 2
+        label: LABEL_OPTIONAL
+        type: TYPE_STRING
+        json_name: "value"
+      }
+      options {
+        map_entry: true
+      }
+    }
   }
   message_type {
     name: "ControllerCreateResponse"
@@ -4317,6 +5288,13 @@ file {
       label: LABEL_OPTIONAL
       type: TYPE_STRING
       json_name: "sandboxId"
+    }
+    field {
+      name: "sandboxer"
+      number: 10
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "sandboxer"
     }
   }
   message_type {
@@ -4381,6 +5359,13 @@ file {
       type: TYPE_STRING
       json_name: "sandboxId"
     }
+    field {
+      name: "sandboxer"
+      number: 10
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "sandboxer"
+    }
   }
   message_type {
     name: "ControllerPlatformResponse"
@@ -4409,6 +5394,13 @@ file {
       type: TYPE_UINT32
       json_name: "timeoutSecs"
     }
+    field {
+      name: "sandboxer"
+      number: 10
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "sandboxer"
+    }
   }
   message_type {
     name: "ControllerStopResponse"
@@ -4421,6 +5413,13 @@ file {
       label: LABEL_OPTIONAL
       type: TYPE_STRING
       json_name: "sandboxId"
+    }
+    field {
+      name: "sandboxer"
+      number: 10
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "sandboxer"
     }
   }
   message_type {
@@ -4457,15 +5456,22 @@ file {
       type: TYPE_BOOL
       json_name: "verbose"
     }
+    field {
+      name: "sandboxer"
+      number: 10
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "sandboxer"
+    }
   }
   message_type {
     name: "ControllerStatusResponse"
     field {
-      name: "id"
+      name: "sandbox_id"
       number: 1
       label: LABEL_OPTIONAL
       type: TYPE_STRING
-      json_name: "id"
+      json_name: "sandboxId"
     }
     field {
       name: "pid"
@@ -4543,9 +5549,44 @@ file {
       type: TYPE_STRING
       json_name: "sandboxId"
     }
+    field {
+      name: "sandboxer"
+      number: 10
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "sandboxer"
+    }
   }
   message_type {
     name: "ControllerShutdownResponse"
+  }
+  message_type {
+    name: "ControllerMetricsRequest"
+    field {
+      name: "sandbox_id"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "sandboxId"
+    }
+    field {
+      name: "sandboxer"
+      number: 10
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "sandboxer"
+    }
+  }
+  message_type {
+    name: "ControllerMetricsResponse"
+    field {
+      name: "metrics"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_MESSAGE
+      type_name: ".containerd.types.Metric"
+      json_name: "metrics"
+    }
   }
   service {
     name: "Store"
@@ -4612,9 +5653,14 @@ file {
       input_type: ".containerd.services.sandbox.v1.ControllerShutdownRequest"
       output_type: ".containerd.services.sandbox.v1.ControllerShutdownResponse"
     }
+    method {
+      name: "Metrics"
+      input_type: ".containerd.services.sandbox.v1.ControllerMetricsRequest"
+      output_type: ".containerd.services.sandbox.v1.ControllerMetricsResponse"
+    }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/services/sandbox/v1;sandbox"
+    go_package: "github.com/containerd/containerd/v2/api/services/sandbox/v1;sandbox"
   }
   syntax: "proto3"
 }
@@ -5128,7 +6174,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/services/snapshots/v1;snapshots"
+    go_package: "github.com/containerd/containerd/v2/api/services/snapshots/v1;snapshots"
   }
   syntax: "proto3"
 }
@@ -5157,43 +6203,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/services/streaming/v1;streaming"
-  }
-  syntax: "proto3"
-}
-file {
-  name: "github.com/containerd/containerd/api/types/metrics.proto"
-  package: "containerd.types"
-  dependency: "google/protobuf/any.proto"
-  dependency: "google/protobuf/timestamp.proto"
-  message_type {
-    name: "Metric"
-    field {
-      name: "timestamp"
-      number: 1
-      label: LABEL_OPTIONAL
-      type: TYPE_MESSAGE
-      type_name: ".google.protobuf.Timestamp"
-      json_name: "timestamp"
-    }
-    field {
-      name: "id"
-      number: 2
-      label: LABEL_OPTIONAL
-      type: TYPE_STRING
-      json_name: "id"
-    }
-    field {
-      name: "data"
-      number: 3
-      label: LABEL_OPTIONAL
-      type: TYPE_MESSAGE
-      type_name: ".google.protobuf.Any"
-      json_name: "data"
-    }
-  }
-  options {
-    go_package: "github.com/containerd/containerd/api/types;types"
+    go_package: "github.com/containerd/containerd/v2/api/services/streaming/v1;streaming"
   }
   syntax: "proto3"
 }
@@ -5838,7 +6848,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/services/tasks/v1;tasks"
+    go_package: "github.com/containerd/containerd/v2/api/services/tasks/v1;tasks"
   }
   syntax: "proto3"
 }
@@ -5893,7 +6903,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/services/transfer/v1;transfer"
+    go_package: "github.com/containerd/containerd/v2/api/services/transfer/v1;transfer"
   }
   syntax: "proto3"
 }
@@ -5960,7 +6970,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/services/ttrpc/events/v1;events"
+    go_package: "github.com/containerd/containerd/v2/api/services/ttrpc/events/v1;events"
   }
   syntax: "proto3"
 }
@@ -5994,7 +7004,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/services/version/v1;version"
+    go_package: "github.com/containerd/containerd/v2/api/services/version/v1;version"
   }
   syntax: "proto3"
 }
@@ -6042,32 +7052,12 @@ file {
       json_name: "manifestLimit"
     }
     field {
-      name: "prefix"
+      name: "extra_references"
       number: 6
-      label: LABEL_OPTIONAL
-      type: TYPE_STRING
-      json_name: "prefix"
-    }
-    field {
-      name: "check_prefix"
-      number: 7
-      label: LABEL_OPTIONAL
-      type: TYPE_BOOL
-      json_name: "checkPrefix"
-    }
-    field {
-      name: "digest_refs"
-      number: 8
-      label: LABEL_OPTIONAL
-      type: TYPE_BOOL
-      json_name: "digestRefs"
-    }
-    field {
-      name: "always_digest"
-      number: 9
-      label: LABEL_OPTIONAL
-      type: TYPE_BOOL
-      json_name: "alwaysDigest"
+      label: LABEL_REPEATED
+      type: TYPE_MESSAGE
+      type_name: ".containerd.types.transfer.ImageReference"
+      json_name: "extraReferences"
     }
     field {
       name: "unpacks"
@@ -6116,14 +7106,53 @@ file {
       json_name: "snapshotter"
     }
   }
+  message_type {
+    name: "ImageReference"
+    field {
+      name: "name"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "name"
+    }
+    field {
+      name: "is_prefix"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_BOOL
+      json_name: "isPrefix"
+    }
+    field {
+      name: "allow_overwrite"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_BOOL
+      json_name: "allowOverwrite"
+    }
+    field {
+      name: "add_digest"
+      number: 4
+      label: LABEL_OPTIONAL
+      type: TYPE_BOOL
+      json_name: "addDigest"
+    }
+    field {
+      name: "skip_named_digest"
+      number: 5
+      label: LABEL_OPTIONAL
+      type: TYPE_BOOL
+      json_name: "skipNamedDigest"
+    }
+  }
   options {
-    go_package: "github.com/containerd/containerd/api/types/transfer"
+    go_package: "github.com/containerd/containerd/v2/api/types/transfer"
   }
   syntax: "proto3"
 }
 file {
   name: "github.com/containerd/containerd/api/types/transfer/importexport.proto"
   package: "containerd.types.transfer"
+  dependency: "github.com/containerd/containerd/api/types/platform.proto"
   message_type {
     name: "ImageImportStream"
     field {
@@ -6164,9 +7193,38 @@ file {
       type: TYPE_STRING
       json_name: "mediaType"
     }
+    field {
+      name: "platforms"
+      number: 3
+      label: LABEL_REPEATED
+      type: TYPE_MESSAGE
+      type_name: ".containerd.types.Platform"
+      json_name: "platforms"
+    }
+    field {
+      name: "all_platforms"
+      number: 4
+      label: LABEL_OPTIONAL
+      type: TYPE_BOOL
+      json_name: "allPlatforms"
+    }
+    field {
+      name: "skip_compatibility_manifest"
+      number: 5
+      label: LABEL_OPTIONAL
+      type: TYPE_BOOL
+      json_name: "skipCompatibilityManifest"
+    }
+    field {
+      name: "skip_non_distributable"
+      number: 6
+      label: LABEL_OPTIONAL
+      type: TYPE_BOOL
+      json_name: "skipNonDistributable"
+    }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/types/transfer"
+    go_package: "github.com/containerd/containerd/v2/api/types/transfer"
   }
   syntax: "proto3"
 }
@@ -6212,7 +7270,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/types/transfer"
+    go_package: "github.com/containerd/containerd/v2/api/types/transfer"
   }
   syntax: "proto3"
 }
@@ -6353,7 +7411,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/types/transfer"
+    go_package: "github.com/containerd/containerd/v2/api/types/transfer"
   }
   syntax: "proto3"
 }
@@ -6381,7 +7439,7 @@ file {
     }
   }
   options {
-    go_package: "github.com/containerd/containerd/api/types/transfer"
+    go_package: "github.com/containerd/containerd/v2/api/types/transfer"
   }
   syntax: "proto3"
 }

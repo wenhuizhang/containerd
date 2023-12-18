@@ -27,13 +27,13 @@ import (
 	"io"
 	"path"
 
-	"github.com/containerd/containerd/archive/compression"
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/labels"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/platforms"
+	"github.com/containerd/containerd/v2/archive/compression"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/labels"
+	"github.com/containerd/containerd/v2/platforms"
+	"github.com/containerd/log"
 	digest "github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -95,6 +95,7 @@ func ImportIndex(ctx context.Context, store content.Store, reader io.Reader, opt
 			symlinks[hdr.Name] = path.Join(path.Dir(hdr.Name), hdr.Linkname)
 		}
 
+		//nolint:staticcheck // TypeRegA is deprecated but we may still receive an external tar with TypeRegA
 		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
 			if hdr.Typeflag != tar.TypeDir {
 				log.G(ctx).WithField("file", hdr.Name).Debug("file type ignored")
@@ -132,7 +133,7 @@ func ImportIndex(ctx context.Context, store content.Store, reader io.Reader, opt
 			return ocispec.Descriptor{}, fmt.Errorf("unsupported OCI version %s", ociLayout.Version)
 		}
 
-		idx, ok := blobs["index.json"]
+		idx, ok := blobs[ocispec.ImageIndexFile]
 		if !ok {
 			return ocispec.Descriptor{}, fmt.Errorf("missing index.json in OCI layout %s", ocispec.ImageLayoutVersion)
 		}
@@ -233,12 +234,14 @@ func ImportIndex(ctx context.Context, store content.Store, reader io.Reader, opt
 	return writeManifest(ctx, store, idx, ocispec.MediaTypeImageIndex)
 }
 
+const (
+	kib       = 1024
+	mib       = 1024 * kib
+	jsonLimit = 20 * mib
+)
+
 func onUntarJSON(r io.Reader, j interface{}) error {
-	b, err := io.ReadAll(r)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(b, j)
+	return json.NewDecoder(io.LimitReader(r, jsonLimit)).Decode(j)
 }
 
 func onUntarBlob(ctx context.Context, r io.Reader, store content.Ingester, size int64, ref string) (digest.Digest, error) {

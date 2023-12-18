@@ -20,15 +20,17 @@ import (
 	"context"
 	"strings"
 
-	eventstypes "github.com/containerd/containerd/api/events"
-	api "github.com/containerd/containerd/api/services/namespaces/v1"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/events"
-	"github.com/containerd/containerd/metadata"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/plugin"
-	ptypes "github.com/containerd/containerd/protobuf/types"
-	"github.com/containerd/containerd/services"
+	eventstypes "github.com/containerd/containerd/v2/api/events"
+	api "github.com/containerd/containerd/v2/api/services/namespaces/v1"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/events"
+	"github.com/containerd/containerd/v2/metadata"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/containerd/v2/plugins"
+	ptypes "github.com/containerd/containerd/v2/protobuf/types"
+	"github.com/containerd/containerd/v2/services"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 	bolt "go.etcd.io/bbolt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -36,19 +38,19 @@ import (
 )
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.ServicePlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.ServicePlugin,
 		ID:   services.NamespacesService,
 		Requires: []plugin.Type{
-			plugin.EventPlugin,
-			plugin.MetadataPlugin,
+			plugins.EventPlugin,
+			plugins.MetadataPlugin,
 		},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			m, err := ic.Get(plugin.MetadataPlugin)
+			m, err := ic.GetSingle(plugins.MetadataPlugin)
 			if err != nil {
 				return nil, err
 			}
-			ep, err := ic.Get(plugin.EventPlugin)
+			ep, err := ic.GetSingle(plugins.EventPlugin)
 			if err != nil {
 				return nil, err
 			}
@@ -135,6 +137,7 @@ func (l *local) Create(ctx context.Context, req *api.CreateNamespaceRequest, _ .
 		return &resp, err
 	}
 
+	ctx = namespaces.WithNamespace(ctx, req.Namespace.Name)
 	if err := l.publisher.Publish(ctx, "/namespaces/create", &eventstypes.NamespaceCreate{
 		Name:   req.Namespace.Name,
 		Labels: req.Namespace.Labels,
@@ -188,6 +191,7 @@ func (l *local) Update(ctx context.Context, req *api.UpdateNamespaceRequest, _ .
 		return &resp, err
 	}
 
+	ctx = namespaces.WithNamespace(ctx, req.Namespace.Name)
 	if err := l.publisher.Publish(ctx, "/namespaces/update", &eventstypes.NamespaceUpdate{
 		Name:   req.Namespace.Name,
 		Labels: req.Namespace.Labels,

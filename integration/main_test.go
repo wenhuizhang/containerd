@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
 	"strconv"
@@ -33,21 +34,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/containers"
-	cri "github.com/containerd/containerd/integration/cri-api/pkg/apis"
-	_ "github.com/containerd/containerd/integration/images" // Keep this around to parse `imageListFile` command line var
-	"github.com/containerd/containerd/integration/remote"
-	dialer "github.com/containerd/containerd/integration/remote/util"
-	criconfig "github.com/containerd/containerd/pkg/cri/config"
-	"github.com/containerd/containerd/pkg/cri/constants"
-	"github.com/containerd/containerd/pkg/cri/server"
-	"github.com/containerd/containerd/pkg/cri/util"
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/containers"
+	cri "github.com/containerd/containerd/v2/integration/cri-api/pkg/apis"
+	_ "github.com/containerd/containerd/v2/integration/images" // Keep this around to parse `imageListFile` command line var
+	"github.com/containerd/containerd/v2/integration/remote"
+	dialer "github.com/containerd/containerd/v2/integration/remote/util"
+	criconfig "github.com/containerd/containerd/v2/pkg/cri/config"
+	"github.com/containerd/containerd/v2/pkg/cri/constants"
+	"github.com/containerd/containerd/v2/pkg/cri/server"
+	"github.com/containerd/containerd/v2/pkg/cri/util"
+	"github.com/containerd/log"
 	"github.com/opencontainers/selinux/go-selinux"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	exec "golang.org/x/sys/execabs"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
@@ -66,14 +66,13 @@ var (
 )
 
 var criEndpoint = flag.String("cri-endpoint", "unix:///run/containerd/containerd.sock", "The endpoint of cri plugin.")
-var criRoot = flag.String("cri-root", "/var/lib/containerd/io.containerd.grpc.v1.cri", "The root directory of cri plugin.")
 var runtimeHandler = flag.String("runtime-handler", "", "The runtime handler to use in the test.")
 var containerdBin = flag.String("containerd-bin", "containerd", "The containerd binary name. The name is used to restart containerd during test.")
 
 func TestMain(m *testing.M) {
 	flag.Parse()
 	if err := ConnectDaemons(); err != nil {
-		logrus.WithError(err).Fatalf("Failed to connect daemons")
+		log.L.WithError(err).Fatalf("Failed to connect daemons")
 	}
 	os.Exit(m.Run())
 }
@@ -287,6 +286,10 @@ func WithWindowsResources(r *runtime.WindowsContainerResources) ContainerOpts {
 }
 
 func WithVolumeMount(hostPath, containerPath string) ContainerOpts {
+	return WithIDMapVolumeMount(hostPath, containerPath, nil, nil)
+}
+
+func WithIDMapVolumeMount(hostPath, containerPath string, uidMaps, gidMaps []*runtime.IDMapping) ContainerOpts {
 	return func(c *runtime.ContainerConfig) {
 		hostPath, _ = filepath.Abs(hostPath)
 		containerPath, _ = filepath.Abs(containerPath)
@@ -294,6 +297,8 @@ func WithVolumeMount(hostPath, containerPath string) ContainerOpts {
 			HostPath:       hostPath,
 			ContainerPath:  containerPath,
 			SelinuxRelabel: selinux.GetEnabled(),
+			UidMappings:    uidMaps,
+			GidMappings:    gidMaps,
 		}
 		c.Mounts = append(c.Mounts, mount)
 	}
@@ -381,6 +386,45 @@ func WithUserNamespace(containerID, hostID, length uint32) ContainerOpts {
 func WithLogPath(path string) ContainerOpts {
 	return func(c *runtime.ContainerConfig) {
 		c.LogPath = path
+	}
+}
+
+// WithRunAsUser sets the uid.
+func WithRunAsUser(uid int64) ContainerOpts {
+	return func(c *runtime.ContainerConfig) {
+		if c.Linux == nil {
+			c.Linux = &runtime.LinuxContainerConfig{}
+		}
+		if c.Linux.SecurityContext == nil {
+			c.Linux.SecurityContext = &runtime.LinuxContainerSecurityContext{}
+		}
+		c.Linux.SecurityContext.RunAsUser = &runtime.Int64Value{Value: uid}
+	}
+}
+
+// WithRunAsUsername sets the username.
+func WithRunAsUsername(username string) ContainerOpts {
+	return func(c *runtime.ContainerConfig) {
+		if c.Linux == nil {
+			c.Linux = &runtime.LinuxContainerConfig{}
+		}
+		if c.Linux.SecurityContext == nil {
+			c.Linux.SecurityContext = &runtime.LinuxContainerSecurityContext{}
+		}
+		c.Linux.SecurityContext.RunAsUsername = username
+	}
+}
+
+// WithRunAsGroup sets the gid.
+func WithRunAsGroup(gid int64) ContainerOpts {
+	return func(c *runtime.ContainerConfig) {
+		if c.Linux == nil {
+			c.Linux = &runtime.LinuxContainerConfig{}
+		}
+		if c.Linux.SecurityContext == nil {
+			c.Linux.SecurityContext = &runtime.LinuxContainerSecurityContext{}
+		}
+		c.Linux.SecurityContext.RunAsGroup = &runtime.Int64Value{Value: gid}
 	}
 }
 

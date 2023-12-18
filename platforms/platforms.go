@@ -102,6 +102,9 @@
 // unless it is explicitly provided. This is treated as equivalent to armhf. A
 // previous architecture, armel, will be normalized to arm/v6.
 //
+// Similarly, the most common arm64 version v8, and most common amd64 version v1
+// are represented without the variant.
+//
 // While these normalizations are provided, their support on arm platforms has
 // not yet been fully implemented and tested.
 package platforms
@@ -115,8 +118,6 @@ import (
 	"strings"
 
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
-
-	"github.com/containerd/containerd/errdefs"
 )
 
 var (
@@ -158,6 +159,19 @@ func (m *matcher) String() string {
 	return Format(m.Platform)
 }
 
+// ParseAll parses a list of platform specifiers into a list of platform.
+func ParseAll(specifiers []string) ([]specs.Platform, error) {
+	platforms := make([]specs.Platform, len(specifiers))
+	for i, s := range specifiers {
+		p, err := Parse(s)
+		if err != nil {
+			return nil, fmt.Errorf("invalid platform %s: %w", s, err)
+		}
+		platforms[i] = p
+	}
+	return platforms, nil
+}
+
 // Parse parses the platform specifier syntax into a platform declaration.
 //
 // Platform specifiers are in the format `<os>|<arch>|<os>/<arch>[/<variant>]`.
@@ -169,14 +183,14 @@ func (m *matcher) String() string {
 func Parse(specifier string) (specs.Platform, error) {
 	if strings.Contains(specifier, "*") {
 		// TODO(stevvooe): need to work out exact wildcard handling
-		return specs.Platform{}, fmt.Errorf("%q: wildcards not yet supported: %w", specifier, errdefs.ErrInvalidArgument)
+		return specs.Platform{}, fmt.Errorf("%q: wildcards not yet supported: %w", specifier, errInvalidArgument)
 	}
 
 	parts := strings.Split(specifier, "/")
 
 	for _, part := range parts {
 		if !specifierRe.MatchString(part) {
-			return specs.Platform{}, fmt.Errorf("%q is an invalid component of %q: platform specifier component must match %q: %w", part, specifier, specifierRe.String(), errdefs.ErrInvalidArgument)
+			return specs.Platform{}, fmt.Errorf("%q is an invalid component of %q: platform specifier component must match %q: %w", part, specifier, specifierRe.String(), errInvalidArgument)
 		}
 	}
 
@@ -196,6 +210,10 @@ func Parse(specifier string) (specs.Platform, error) {
 				p.Variant = cpuVariant()
 			}
 
+			if p.OS == "windows" {
+				p.OSVersion = GetWindowsOsVersion()
+			}
+
 			return p, nil
 		}
 
@@ -208,7 +226,7 @@ func Parse(specifier string) (specs.Platform, error) {
 			return p, nil
 		}
 
-		return specs.Platform{}, fmt.Errorf("%q: unknown operating system or architecture: %w", specifier, errdefs.ErrInvalidArgument)
+		return specs.Platform{}, fmt.Errorf("%q: unknown operating system or architecture: %w", specifier, errInvalidArgument)
 	case 2:
 		// In this case, we treat as a regular os/arch pair. We don't care
 		// about whether or not we know of the platform.
@@ -216,6 +234,10 @@ func Parse(specifier string) (specs.Platform, error) {
 		p.Architecture, p.Variant = normalizeArch(parts[1], "")
 		if p.Architecture == "arm" && p.Variant == "v7" {
 			p.Variant = ""
+		}
+
+		if p.OS == "windows" {
+			p.OSVersion = GetWindowsOsVersion()
 		}
 
 		return p, nil
@@ -227,10 +249,14 @@ func Parse(specifier string) (specs.Platform, error) {
 			p.Variant = "v8"
 		}
 
+		if p.OS == "windows" {
+			p.OSVersion = GetWindowsOsVersion()
+		}
+
 		return p, nil
 	}
 
-	return specs.Platform{}, fmt.Errorf("%q: cannot parse platform specifier: %w", specifier, errdefs.ErrInvalidArgument)
+	return specs.Platform{}, fmt.Errorf("%q: cannot parse platform specifier: %w", specifier, errInvalidArgument)
 }
 
 // MustParse is like Parses but panics if the specifier cannot be parsed.

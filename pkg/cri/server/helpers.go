@@ -21,33 +21,27 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"regexp"
 	goruntime "runtime"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/containers"
-	"github.com/containerd/containerd/errdefs"
-	clabels "github.com/containerd/containerd/labels"
-	criconfig "github.com/containerd/containerd/pkg/cri/config"
-	containerstore "github.com/containerd/containerd/pkg/cri/store/container"
-	imagestore "github.com/containerd/containerd/pkg/cri/store/image"
-	sandboxstore "github.com/containerd/containerd/pkg/cri/store/sandbox"
-	runtimeoptions "github.com/containerd/containerd/pkg/runtimeoptions/v1"
-	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/reference/docker"
-	"github.com/containerd/containerd/runtime/linux/runctypes"
-	runcoptions "github.com/containerd/containerd/runtime/v2/runc/options"
-	"github.com/containerd/typeurl"
+	"github.com/containerd/typeurl/v2"
 	runtimespec "github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/sirupsen/logrus"
-
-	runhcsoptions "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
-	imagedigest "github.com/opencontainers/go-digest"
-	"github.com/pelletier/go-toml"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/containers"
+	"github.com/containerd/containerd/v2/errdefs"
+	clabels "github.com/containerd/containerd/v2/labels"
+	crilabels "github.com/containerd/containerd/v2/pkg/cri/labels"
+	containerstore "github.com/containerd/containerd/v2/pkg/cri/store/container"
+	imagestore "github.com/containerd/containerd/v2/pkg/cri/store/image"
+	"github.com/containerd/log"
 )
+
+// TODO: Move common helpers for sbserver and podsandbox to a dedicated package once basic services are functinal.
 
 const (
 	// errorStartReason is the exit reason when fails to start container.
@@ -72,56 +66,18 @@ const (
 	// Delimiter used to construct container/sandbox names.
 	nameDelimiter = "_"
 
-	// criContainerdPrefix is common prefix for cri-containerd
-	criContainerdPrefix = "io.cri-containerd"
-	// containerKindLabel is a label key indicating container is sandbox container or application container
-	containerKindLabel = criContainerdPrefix + ".kind"
-	// containerKindSandbox is a label value indicating container is sandbox container
-	containerKindSandbox = "sandbox"
-	// containerKindContainer is a label value indicating container is application container
-	containerKindContainer = "container"
-	// imageLabelKey is the label key indicating the image is managed by cri plugin.
-	imageLabelKey = criContainerdPrefix + ".image"
-	// imageLabelValue is the label value indicating the image is managed by cri plugin.
-	imageLabelValue = "managed"
-	// sandboxMetadataExtension is an extension name that identify metadata of sandbox in CreateContainerRequest
-	sandboxMetadataExtension = criContainerdPrefix + ".sandbox.metadata"
-	// containerMetadataExtension is an extension name that identify metadata of container in CreateContainerRequest
-	containerMetadataExtension = criContainerdPrefix + ".container.metadata"
-
 	// defaultIfName is the default network interface for the pods
 	defaultIfName = "eth0"
 
-	// runtimeRunhcsV1 is the runtime type for runhcs.
-	runtimeRunhcsV1 = "io.containerd.runhcs.v1"
-
-	// name prefix for CRI server specific spans
-	criSpanPrefix = "pkg.cri.server"
+	// devShm is the default path of /dev/shm.
+	devShm = "/dev/shm"
+	// etcHosts is the default path of /etc/hosts file.
+	etcHosts = "/etc/hosts"
+	// etcHostname is the default path of /etc/hostname file.
+	etcHostname = "/etc/hostname"
+	// resolvConfPath is the abs path of resolv.conf on host or container.
+	resolvConfPath = "/etc/resolv.conf"
 )
-
-// makeSandboxName generates sandbox name from sandbox metadata. The name
-// generated is unique as long as sandbox metadata is unique.
-func makeSandboxName(s *runtime.PodSandboxMetadata) string {
-	return strings.Join([]string{
-		s.Name,                       // 0
-		s.Namespace,                  // 1
-		s.Uid,                        // 2
-		fmt.Sprintf("%d", s.Attempt), // 3
-	}, nameDelimiter)
-}
-
-// makeContainerName generates container name from sandbox and container metadata.
-// The name generated is unique as long as the sandbox container combination is
-// unique.
-func makeContainerName(c *runtime.ContainerMetadata, s *runtime.PodSandboxMetadata) string {
-	return strings.Join([]string{
-		c.Name,                       // 0: container name
-		s.Name,                       // 1: pod name
-		s.Namespace,                  // 2: pod namespace
-		s.Uid,                        // 3: pod uid
-		fmt.Sprintf("%d", c.Attempt), // 4: attempt number of creating the container
-	}, nameDelimiter)
-}
 
 // getSandboxRootDir returns the root directory for managing sandbox files,
 // e.g. hosts files.
@@ -133,6 +89,50 @@ func (c *criService) getSandboxRootDir(id string) string {
 // e.g. named pipes.
 func (c *criService) getVolatileSandboxRootDir(id string) string {
 	return filepath.Join(c.config.StateDir, sandboxesDir, id)
+}
+
+// getSandboxHostname returns the hostname file path inside the sandbox root directory.
+func (c *criService) getSandboxHostname(id string) string {
+	return filepath.Join(c.getSandboxRootDir(id), "hostname")
+}
+
+// getSandboxHosts returns the hosts file path inside the sandbox root directory.
+func (c *criService) getSandboxHosts(id string) string {
+	return filepath.Join(c.getSandboxRootDir(id), "hosts")
+}
+
+// getResolvPath returns resolv.conf filepath for specified sandbox.
+func (c *criService) getResolvPath(id string) string {
+	return filepath.Join(c.getSandboxRootDir(id), "resolv.conf")
+}
+
+// getSandboxDevShm returns the shm file path inside the sandbox root directory.
+func (c *criService) getSandboxDevShm(id string) string {
+	return filepath.Join(c.getVolatileSandboxRootDir(id), "shm")
+}
+
+// makeSandboxName generates sandbox name from sandbox metadata. The name
+// generated is unique as long as sandbox metadata is unique.
+func makeSandboxName(s *runtime.PodSandboxMetadata) string {
+	return strings.Join([]string{
+		s.Name,      // 0
+		s.Namespace, // 1
+		s.Uid,       // 2
+		strconv.FormatUint(uint64(s.Attempt), 10), // 3
+	}, nameDelimiter)
+}
+
+// makeContainerName generates container name from sandbox and container metadata.
+// The name generated is unique as long as the sandbox container combination is
+// unique.
+func makeContainerName(c *runtime.ContainerMetadata, s *runtime.PodSandboxMetadata) string {
+	return strings.Join([]string{
+		c.Name,      // 0: container name
+		s.Name,      // 1: pod name
+		s.Namespace, // 2: pod namespace
+		s.Uid,       // 3: pod uid
+		strconv.FormatUint(uint64(c.Attempt), 10), // 4: attempt number of creating the container
+	}, nameDelimiter)
 }
 
 // getContainerRootDir returns the root directory for managing container files,
@@ -150,51 +150,6 @@ func (c *criService) getVolatileContainerRootDir(id string) string {
 // criContainerStateToString formats CRI container state to string.
 func criContainerStateToString(state runtime.ContainerState) string {
 	return runtime.ContainerState_name[int32(state)]
-}
-
-// getRepoDigestAngTag returns image repoDigest and repoTag of the named image reference.
-func getRepoDigestAndTag(namedRef docker.Named, digest imagedigest.Digest, schema1 bool) (string, string) {
-	var repoTag, repoDigest string
-	if _, ok := namedRef.(docker.NamedTagged); ok {
-		repoTag = namedRef.String()
-	}
-	if _, ok := namedRef.(docker.Canonical); ok {
-		repoDigest = namedRef.String()
-	} else if !schema1 {
-		// digest is not actual repo digest for schema1 image.
-		repoDigest = namedRef.Name() + "@" + digest.String()
-	}
-	return repoDigest, repoTag
-}
-
-// localResolve resolves image reference locally and returns corresponding image metadata. It
-// returns errdefs.ErrNotFound if the reference doesn't exist.
-func (c *criService) localResolve(refOrID string) (imagestore.Image, error) {
-	getImageID := func(refOrId string) string {
-		if _, err := imagedigest.Parse(refOrID); err == nil {
-			return refOrID
-		}
-		return func(ref string) string {
-			// ref is not image id, try to resolve it locally.
-			// TODO(random-liu): Handle this error better for debugging.
-			normalized, err := docker.ParseDockerRef(ref)
-			if err != nil {
-				return ""
-			}
-			id, err := c.imageStore.Resolve(normalized.String())
-			if err != nil {
-				return ""
-			}
-			return id
-		}(refOrID)
-	}
-
-	imageID := getImageID(refOrID)
-	if imageID == "" {
-		// Try to treat ref as imageID
-		imageID = refOrID
-	}
-	return c.imageStore.Get(imageID)
 }
 
 // toContainerdImage converts an image object in image store to containerd image handler.
@@ -223,30 +178,6 @@ func getUserFromImage(user string) (*int64, string) {
 	}
 	// If user is a numeric uid.
 	return &uid, ""
-}
-
-// ensureImageExists returns corresponding metadata of the image reference, if image is not
-// pulled yet, the function will pull the image.
-func (c *criService) ensureImageExists(ctx context.Context, ref string, config *runtime.PodSandboxConfig) (*imagestore.Image, error) {
-	image, err := c.localResolve(ref)
-	if err != nil && !errdefs.IsNotFound(err) {
-		return nil, fmt.Errorf("failed to get image %q: %w", ref, err)
-	}
-	if err == nil {
-		return &image, nil
-	}
-	// Pull image to ensure the image exists
-	resp, err := c.PullImage(ctx, &runtime.PullImageRequest{Image: &runtime.ImageSpec{Image: ref}, SandboxConfig: config})
-	if err != nil {
-		return nil, fmt.Errorf("failed to pull image %q: %w", ref, err)
-	}
-	imageID := resp.GetImageRef()
-	newImage, err := c.imageStore.Get(imageID)
-	if err != nil {
-		// It's still possible that someone removed the image right after it is pulled.
-		return nil, fmt.Errorf("failed to get image %q after pulling: %w", imageID, err)
-	}
-	return &newImage, nil
 }
 
 // validateTargetContainer checks that a container is a valid
@@ -299,83 +230,15 @@ func buildLabels(configLabels, imageConfigLabels map[string]string, containerTyp
 		} else {
 			// In case the image label is invalid, we output a warning and skip adding it to the
 			// container.
-			logrus.WithError(err).Warnf("unable to add image label with key %s to the container", k)
+			log.L.WithError(err).Warnf("unable to add image label with key %s to the container", k)
 		}
 	}
 	// labels from the CRI request (config) will override labels in the image config
 	for k, v := range configLabels {
 		labels[k] = v
 	}
-	labels[containerKindLabel] = containerType
+	labels[crilabels.ContainerKindLabel] = containerType
 	return labels
-}
-
-// toRuntimeAuthConfig converts cri plugin auth config to runtime auth config.
-func toRuntimeAuthConfig(a criconfig.AuthConfig) *runtime.AuthConfig {
-	return &runtime.AuthConfig{
-		Username:      a.Username,
-		Password:      a.Password,
-		Auth:          a.Auth,
-		IdentityToken: a.IdentityToken,
-	}
-}
-
-// parseImageReferences parses a list of arbitrary image references and returns
-// the repotags and repodigests
-func parseImageReferences(refs []string) ([]string, []string) {
-	var tags, digests []string
-	for _, ref := range refs {
-		parsed, err := docker.ParseAnyReference(ref)
-		if err != nil {
-			continue
-		}
-		if _, ok := parsed.(docker.Canonical); ok {
-			digests = append(digests, parsed.String())
-		} else if _, ok := parsed.(docker.Tagged); ok {
-			tags = append(tags, parsed.String())
-		}
-	}
-	return tags, digests
-}
-
-// generateRuntimeOptions generates runtime options from cri plugin config.
-func generateRuntimeOptions(r criconfig.Runtime, c criconfig.Config) (interface{}, error) {
-	if r.Options == nil {
-		if r.Type != plugin.RuntimeLinuxV1 {
-			return nil, nil
-		}
-		// This is a legacy config, generate runctypes.RuncOptions.
-		return &runctypes.RuncOptions{
-			Runtime:       r.Engine,
-			RuntimeRoot:   r.Root,
-			SystemdCgroup: c.SystemdCgroup,
-		}, nil
-	}
-	optionsTree, err := toml.TreeFromMap(r.Options)
-	if err != nil {
-		return nil, err
-	}
-	options := getRuntimeOptionsType(r.Type)
-	if err := optionsTree.Unmarshal(options); err != nil {
-		return nil, err
-	}
-	return options, nil
-}
-
-// getRuntimeOptionsType gets empty runtime options by the runtime type name.
-func getRuntimeOptionsType(t string) interface{} {
-	switch t {
-	case plugin.RuntimeRuncV1:
-		fallthrough
-	case plugin.RuntimeRuncV2:
-		return &runcoptions.Options{}
-	case plugin.RuntimeLinuxV1:
-		return &runctypes.RuncOptions{}
-	case runtimeRunhcsV1:
-		return &runhcsoptions.Options{}
-	default:
-		return &runtimeoptions.Options{}
-	}
 }
 
 // getRuntimeOptions get runtime options from container metadata.
@@ -407,13 +270,6 @@ func unknownContainerStatus() containerstore.Status {
 		ExitCode:   unknownExitCode,
 		Reason:     unknownExitReason,
 		Unknown:    true,
-	}
-}
-
-// unknownSandboxStatus returns the default sandbox status when its status is unknown.
-func unknownSandboxStatus() sandboxstore.Status {
-	return sandboxstore.Status{
-		State: sandboxstore.StateUnknown,
 	}
 }
 
@@ -476,7 +332,7 @@ func copyResourcesToStatus(spec *runtimespec.Spec, status containerstore.Status)
 		}
 
 		if spec.Linux.Resources.HugepageLimits != nil {
-			hugepageLimits := make([]*runtime.HugepageLimit, 0)
+			hugepageLimits := make([]*runtime.HugepageLimit, 0, len(spec.Linux.Resources.HugepageLimits))
 			for _, l := range spec.Linux.Resources.HugepageLimits {
 				hugepageLimits = append(hugepageLimits, &runtime.HugepageLimit{
 					PageSize: l.Pagesize,
@@ -523,14 +379,12 @@ func copyResourcesToStatus(spec *runtimespec.Spec, status containerstore.Status)
 func (c *criService) generateAndSendContainerEvent(ctx context.Context, containerID string, sandboxID string, eventType runtime.ContainerEventType) {
 	podSandboxStatus, err := c.getPodSandboxStatus(ctx, sandboxID)
 	if err != nil {
-		// TODO(https://github.com/containerd/containerd/issues/7785):
-		// Do not skip events with nil PodSandboxStatus.
-		logrus.Errorf("Failed to get podSandbox status for container event for sandboxID %q: %v. Skipping sending the event.", sandboxID, err)
-		return
+		log.G(ctx).Warnf("Failed to get podSandbox status for container event for sandboxID %q: %v. Sending the event with nil podSandboxStatus.", sandboxID, err)
+		podSandboxStatus = nil
 	}
 	containerStatuses, err := c.getContainerStatuses(ctx, sandboxID)
 	if err != nil {
-		logrus.Errorf("Failed to get container statuses for container event for sandboxID %q: %v", sandboxID, err)
+		log.G(ctx).Errorf("Failed to get container statuses for container event for sandboxID %q: %v", sandboxID, err)
 	}
 
 	event := runtime.ContainerEventResponse{
@@ -545,7 +399,8 @@ func (c *criService) generateAndSendContainerEvent(ctx context.Context, containe
 	select {
 	case c.containerEventsChan <- event:
 	default:
-		logrus.Debugf("containerEventsChan is full, discarding event %+v", event)
+		containerEventsDroppedCount.Inc()
+		log.G(ctx).Debugf("containerEventsChan is full, discarding event %+v", event)
 	}
 }
 
@@ -601,4 +456,181 @@ func hostNetwork(config *runtime.PodSandboxConfig) bool {
 		hostNet = config.GetLinux().GetSecurityContext().GetNamespaceOptions().GetNetwork() == runtime.NamespaceMode_NODE
 	}
 	return hostNet
+}
+
+// getCgroupsPath generates container cgroups path.
+func getCgroupsPath(cgroupsParent, id string) string {
+	base := path.Base(cgroupsParent)
+	if strings.HasSuffix(base, ".slice") {
+		// For a.slice/b.slice/c.slice, base is c.slice.
+		// runc systemd cgroup path format is "slice:prefix:name".
+		return strings.Join([]string{base, "cri-containerd", id}, ":")
+	}
+	return filepath.Join(cgroupsParent, id)
+}
+
+func toLabel(selinuxOptions *runtime.SELinuxOption) ([]string, error) {
+	var labels []string
+
+	if selinuxOptions == nil {
+		return nil, nil
+	}
+	if err := checkSelinuxLevel(selinuxOptions.Level); err != nil {
+		return nil, err
+	}
+	if selinuxOptions.User != "" {
+		labels = append(labels, "user:"+selinuxOptions.User)
+	}
+	if selinuxOptions.Role != "" {
+		labels = append(labels, "role:"+selinuxOptions.Role)
+	}
+	if selinuxOptions.Type != "" {
+		labels = append(labels, "type:"+selinuxOptions.Type)
+	}
+	if selinuxOptions.Level != "" {
+		labels = append(labels, "level:"+selinuxOptions.Level)
+	}
+
+	return labels, nil
+}
+
+func checkSelinuxLevel(level string) error {
+	if len(level) == 0 {
+		return nil
+	}
+
+	matched, err := regexp.MatchString(`^s\d(-s\d)??(:c\d{1,4}(\.c\d{1,4})?(,c\d{1,4}(\.c\d{1,4})?)*)?$`, level)
+	if err != nil {
+		return fmt.Errorf("the format of 'level' %q is not correct: %w", level, err)
+	}
+	if !matched {
+		return fmt.Errorf("the format of 'level' %q is not correct", level)
+	}
+	return nil
+}
+
+func parseUsernsIDMap(runtimeIDMap []*runtime.IDMapping) ([]runtimespec.LinuxIDMapping, error) {
+	var m []runtimespec.LinuxIDMapping
+
+	if len(runtimeIDMap) == 0 {
+		return m, nil
+	}
+
+	if len(runtimeIDMap) > 1 {
+		// We only accept 1 line, because containerd.WithRemappedSnapshot() only supports that.
+		return m, fmt.Errorf("only one mapping line supported, got %v mapping lines", len(runtimeIDMap))
+	}
+
+	// We know len is 1 now.
+	if runtimeIDMap[0] == nil {
+		return m, nil
+	}
+	uidMap := *runtimeIDMap[0]
+
+	if uidMap.Length < 1 {
+		return m, fmt.Errorf("invalid mapping length: %v", uidMap.Length)
+	}
+
+	m = []runtimespec.LinuxIDMapping{
+		{
+			ContainerID: uidMap.ContainerId,
+			HostID:      uidMap.HostId,
+			Size:        uidMap.Length,
+		},
+	}
+
+	return m, nil
+}
+
+func parseUsernsIDs(userns *runtime.UserNamespace) (uids, gids []runtimespec.LinuxIDMapping, retErr error) {
+	if userns == nil {
+		// If userns is not set, the kubelet doesn't support this option
+		// and we should just fallback to no userns. This is completely
+		// valid.
+		return nil, nil, nil
+	}
+
+	uids, err := parseUsernsIDMap(userns.GetUids())
+	if err != nil {
+		return nil, nil, fmt.Errorf("UID mapping: %w", err)
+	}
+
+	gids, err = parseUsernsIDMap(userns.GetGids())
+	if err != nil {
+		return nil, nil, fmt.Errorf("GID mapping: %w", err)
+	}
+
+	switch mode := userns.GetMode(); mode {
+	case runtime.NamespaceMode_NODE:
+		if len(uids) != 0 || len(gids) != 0 {
+			return nil, nil, fmt.Errorf("can't use user namespace mode %q with mappings. Got %v UID mappings and %v GID mappings", mode, len(uids), len(gids))
+		}
+	case runtime.NamespaceMode_POD:
+		// This is valid, we will handle it in WithPodNamespaces().
+		if len(uids) == 0 || len(gids) == 0 {
+			return nil, nil, fmt.Errorf("can't use user namespace mode %q without UID and GID mappings", mode)
+		}
+	default:
+		return nil, nil, fmt.Errorf("unsupported user namespace mode: %q", mode)
+	}
+
+	return uids, gids, nil
+}
+
+// sameUsernsConfig checks if the userns configs are the same. If the mappings
+// on each config are the same but in different order, it returns false.
+// XXX: If the runtime.UserNamespace struct changes, we should update this
+// function accordingly.
+func sameUsernsConfig(a, b *runtime.UserNamespace) bool {
+	// If both are nil, they are the same.
+	if a == nil && b == nil {
+		return true
+	}
+	// If only one is nil, they are different.
+	if a == nil || b == nil {
+		return false
+	}
+	// At this point, a is not nil nor b.
+
+	if a.GetMode() != b.GetMode() {
+		return false
+	}
+
+	aUids, aGids, err := parseUsernsIDs(a)
+	if err != nil {
+		return false
+	}
+	bUids, bGids, err := parseUsernsIDs(b)
+	if err != nil {
+		return false
+	}
+
+	if !sameMapping(aUids, bUids) {
+		return false
+	}
+	if !sameMapping(aGids, bGids) {
+		return false
+	}
+	return true
+}
+
+// sameMapping checks if the mappings are the same. If the mappings are the same
+// but in different order, it returns false.
+func sameMapping(a, b []runtimespec.LinuxIDMapping) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for x := range a {
+		if a[x].ContainerID != b[x].ContainerID {
+			return false
+		}
+		if a[x].HostID != b[x].HostID {
+			return false
+		}
+		if a[x].Size != b[x].Size {
+			return false
+		}
+	}
+	return true
 }

@@ -19,20 +19,31 @@ package images
 import (
 	"fmt"
 
-	"github.com/containerd/containerd/cmd/ctr/commands"
-	"github.com/containerd/containerd/errdefs"
 	"github.com/urfave/cli"
+
+	"github.com/containerd/containerd/v2/cmd/ctr/commands"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/pkg/transfer/image"
+	"github.com/distribution/reference"
 )
 
 var tagCommand = cli.Command{
 	Name:        "tag",
-	Usage:       "tag an image",
+	Usage:       "Tag an image",
 	ArgsUsage:   "[flags] <source_ref> <target_ref> [<target_ref>, ...]",
 	Description: `Tag an image for use in containerd.`,
 	Flags: []cli.Flag{
 		cli.BoolFlag{
 			Name:  "force",
-			Usage: "force target_ref to be created, regardless if it already exists",
+			Usage: "Force target_ref to be created, regardless if it already exists",
+		},
+		cli.BoolTFlag{
+			Name:  "local",
+			Usage: "Run tag locally rather than through transfer API",
+		},
+		cli.BoolFlag{
+			Name:  "skip-reference-check",
+			Usage: "Skip the strict check for reference names",
 		},
 	},
 	Action: func(context *cli.Context) error {
@@ -52,6 +63,22 @@ var tagCommand = cli.Command{
 		}
 		defer cancel()
 
+		if !context.BoolT("local") {
+			for _, targetRef := range context.Args()[1:] {
+				if !context.Bool("skip-reference-check") {
+					if _, err := reference.ParseAnyReference(targetRef); err != nil {
+						return fmt.Errorf("error parsing reference: %q is not a valid repository/tag %v", targetRef, err)
+					}
+				}
+				err = client.Transfer(ctx, image.NewStore(ref), image.NewStore(targetRef))
+				if err != nil {
+					return err
+				}
+				fmt.Println(targetRef)
+			}
+			return nil
+		}
+
 		ctx, done, err := client.WithLease(ctx)
 		if err != nil {
 			return err
@@ -65,6 +92,11 @@ var tagCommand = cli.Command{
 		}
 		// Support multiple references for one command run
 		for _, targetRef := range context.Args()[1:] {
+			if !context.Bool("skip-reference-check") {
+				if _, err := reference.ParseAnyReference(targetRef); err != nil {
+					return fmt.Errorf("error parsing reference: %q is not a valid repository/tag %v", targetRef, err)
+				}
+			}
 			image.Name = targetRef
 			// Attempt to create the image first
 			if _, err = imageService.Create(ctx, image); err != nil {

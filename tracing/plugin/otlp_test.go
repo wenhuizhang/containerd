@@ -21,9 +21,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/v2/errdefs"
 	"go.opentelemetry.io/otel/sdk/trace"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
@@ -71,6 +70,7 @@ func TestNewExporter(t *testing.T) {
 			output: errdefs.ErrNotImplemented,
 		},
 	} {
+		testcase := testcase
 		t.Run(testcase.name, func(t *testing.T) {
 			t.Logf("input: %v", testcase.input)
 
@@ -100,7 +100,7 @@ func TestNewTracer(t *testing.T) {
 	config := &TraceConfig{ServiceName: "containerd", TraceSamplingRatio: 1.0}
 	t.Logf("config: %v", config)
 
-	procs := make([]sdktrace.SpanProcessor, 0, 1)
+	procs := make([]trace.SpanProcessor, 0, 1)
 
 	//Create a dummy in memory exporter for test
 	exp := tracetest.NewInMemoryExporter()

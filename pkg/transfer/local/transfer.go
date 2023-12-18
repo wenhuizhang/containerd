@@ -22,39 +22,46 @@ import (
 	"io"
 	"time"
 
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/leases"
-	"github.com/containerd/containerd/pkg/transfer"
-	"github.com/containerd/typeurl"
+	"github.com/containerd/typeurl/v2"
 	"golang.org/x/sync/semaphore"
+
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/leases"
+	"github.com/containerd/containerd/v2/pkg/imageverifier"
+	"github.com/containerd/containerd/v2/pkg/kmutex"
+	"github.com/containerd/containerd/v2/pkg/transfer"
+	"github.com/containerd/containerd/v2/pkg/unpack"
 )
 
 type localTransferService struct {
-	leases  leases.Manager
-	content content.Store
-	images  images.Store
-
-	// semaphore.NewWeighted(int64(rCtx.MaxConcurrentDownloads))
-	limiter *semaphore.Weighted
-
-	// TODO: Duplication suppressor
-
-	// Configuration
-	//  - Max downloads
-	//  - Max uploads
-
-	// Supported platforms
-	//  - Platform -> snapshotter defaults?
+	leases    leases.Manager
+	content   content.Store
+	images    images.Store
+	verifiers map[string]imageverifier.ImageVerifier
+	// limiter for upload
+	limiterU *semaphore.Weighted
+	// limiter for download operation
+	limiterD *semaphore.Weighted
+	config   TransferConfig
 }
 
-func NewTransferService(lm leases.Manager, cs content.Store, is images.Store) transfer.Transferrer {
-	return &localTransferService{
-		leases:  lm,
-		content: cs,
-		images:  is,
+func NewTransferService(lm leases.Manager, cs content.Store, is images.Store, vfs map[string]imageverifier.ImageVerifier, tc *TransferConfig) transfer.Transferrer {
+	ts := &localTransferService{
+		leases:    lm,
+		content:   cs,
+		images:    is,
+		verifiers: vfs,
+		config:    *tc,
 	}
+	if tc.MaxConcurrentUploadedLayers > 0 {
+		ts.limiterU = semaphore.NewWeighted(int64(tc.MaxConcurrentUploadedLayers))
+	}
+	if tc.MaxConcurrentDownloads > 0 {
+		ts.limiterD = semaphore.NewWeighted(int64(tc.MaxConcurrentDownloads))
+	}
+	return ts
 }
 
 func (ts *localTransferService) Transfer(ctx context.Context, src interface{}, dest interface{}, opts ...transfer.Opt) error {
@@ -74,12 +81,17 @@ func (ts *localTransferService) Transfer(ctx context.Context, src interface{}, d
 		switch d := dest.(type) {
 		case transfer.ImagePusher:
 			return ts.push(ctx, s, d, topts)
+		case transfer.ImageExporter:
+			return ts.exportStream(ctx, s, d, topts)
+		case transfer.ImageStorer:
+			return ts.tag(ctx, s, d, topts)
 		}
 	case transfer.ImageImporter:
 		switch d := dest.(type) {
 		case transfer.ImageExportStreamer:
 			return ts.echo(ctx, s, d, topts)
 		case transfer.ImageStorer:
+			// TODO: verify imports with ImageVerifiers?
 			return ts.importStream(ctx, s, d, topts)
 		}
 	}
@@ -149,4 +161,27 @@ func (ts *localTransferService) withLease(ctx context.Context, opts ...leases.Op
 	return ctx, func(ctx context.Context) error {
 		return ls.Delete(ctx, l)
 	}, nil
+}
+
+type TransferConfig struct {
+	// MaxConcurrentDownloads is the max concurrent content downloads for pull.
+	MaxConcurrentDownloads int
+	// MaxConcurrentUploadedLayers is the max concurrent uploads for push
+	MaxConcurrentUploadedLayers int
+
+	// DuplicationSuppressor is used to make sure that there is only one
+	// in-flight fetch request or unpack handler for a given descriptor's
+	// digest or chain ID.
+	DuplicationSuppressor kmutex.KeyedLocker
+
+	// BaseHandlers are a set of handlers which get are called on dispatch.
+	// These handlers always get called before any operation specific
+	// handlers.
+	BaseHandlers []images.Handler
+
+	// UnpackPlatforms are used to specify supported combination of platforms and snapshotters
+	UnpackPlatforms []unpack.Platform
+
+	// RegistryConfigPath is a path to the root directory containing registry-specific configurations
+	RegistryConfigPath string
 }

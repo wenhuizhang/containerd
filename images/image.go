@@ -23,10 +23,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/platforms"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/platforms"
+	"github.com/containerd/log"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
@@ -58,6 +58,7 @@ type Image struct {
 // DeleteOptions provide options on image delete
 type DeleteOptions struct {
 	Synchronous bool
+	Target      *ocispec.Descriptor
 }
 
 // DeleteOpt allows configuring a delete operation
@@ -68,6 +69,16 @@ type DeleteOpt func(context.Context, *DeleteOptions) error
 func SynchronousDelete() DeleteOpt {
 	return func(ctx context.Context, o *DeleteOptions) error {
 		o.Synchronous = true
+		return nil
+	}
+}
+
+// DeleteTarget is used to specify the target value an image is expected
+// to have when deleting. If the image has a different target, then
+// NotFound is returned.
+func DeleteTarget(target *ocispec.Descriptor) DeleteOpt {
+	return func(ctx context.Context, o *DeleteOptions) error {
+		o.Target = target
 		return nil
 	}
 }
@@ -147,8 +158,7 @@ func Manifest(ctx context.Context, provider content.Provider, image ocispec.Desc
 	)
 
 	if err := Walk(ctx, HandlerFunc(func(ctx context.Context, desc ocispec.Descriptor) ([]ocispec.Descriptor, error) {
-		switch desc.MediaType {
-		case MediaTypeDockerSchema2Manifest, ocispec.MediaTypeImageManifest:
+		if IsManifestType(desc.MediaType) {
 			p, err := content.ReadBlob(ctx, provider, desc)
 			if err != nil {
 				return nil, err
@@ -169,17 +179,11 @@ func Manifest(ctx context.Context, provider content.Provider, image ocispec.Desc
 				}
 
 				if desc.Platform == nil {
-					p, err := content.ReadBlob(ctx, provider, manifest.Config)
+					imagePlatform, err := ConfigPlatform(ctx, provider, manifest.Config)
 					if err != nil {
 						return nil, err
 					}
-
-					var image ocispec.Image
-					if err := json.Unmarshal(p, &image); err != nil {
-						return nil, err
-					}
-
-					if !platform.Match(platforms.Normalize(ocispec.Platform{OS: image.OS, Architecture: image.Architecture})) {
+					if !platform.Match(imagePlatform) {
 						return nil, nil
 					}
 
@@ -192,7 +196,7 @@ func Manifest(ctx context.Context, provider content.Provider, image ocispec.Desc
 			})
 
 			return nil, nil
-		case MediaTypeDockerSchema2ManifestList, ocispec.MediaTypeImageIndex:
+		} else if IsIndexType(desc.MediaType) {
 			p, err := content.ReadBlob(ctx, provider, desc)
 			if err != nil {
 				return nil, err
@@ -260,7 +264,7 @@ func Config(ctx context.Context, provider content.Provider, image ocispec.Descri
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	return manifest.Config, err
+	return manifest.Config, nil
 }
 
 // Platforms returns one or more platforms supported by the image.
@@ -272,20 +276,12 @@ func Platforms(ctx context.Context, provider content.Provider, image ocispec.Des
 			return nil, ErrSkipDesc
 		}
 
-		switch desc.MediaType {
-		case MediaTypeDockerSchema2Config, ocispec.MediaTypeImageConfig:
-			p, err := content.ReadBlob(ctx, provider, desc)
+		if IsConfigType(desc.MediaType) {
+			imagePlatform, err := ConfigPlatform(ctx, provider, desc)
 			if err != nil {
 				return nil, err
 			}
-
-			var image ocispec.Image
-			if err := json.Unmarshal(p, &image); err != nil {
-				return nil, err
-			}
-
-			platformSpecs = append(platformSpecs,
-				platforms.Normalize(ocispec.Platform{OS: image.OS, Architecture: image.Architecture}))
+			platformSpecs = append(platformSpecs, imagePlatform)
 		}
 		return nil, nil
 	}), ChildrenHandler(provider)), image)
@@ -336,9 +332,7 @@ func Check(ctx context.Context, provider content.Provider, image ocispec.Descrip
 
 // Children returns the immediate children of content described by the descriptor.
 func Children(ctx context.Context, provider content.Provider, desc ocispec.Descriptor) ([]ocispec.Descriptor, error) {
-	var descs []ocispec.Descriptor
-	switch desc.MediaType {
-	case MediaTypeDockerSchema2Manifest, ocispec.MediaTypeImageManifest:
+	if IsManifestType(desc.MediaType) {
 		p, err := content.ReadBlob(ctx, provider, desc)
 		if err != nil {
 			return nil, err
@@ -355,9 +349,8 @@ func Children(ctx context.Context, provider content.Provider, desc ocispec.Descr
 			return nil, err
 		}
 
-		descs = append(descs, manifest.Config)
-		descs = append(descs, manifest.Layers...)
-	case MediaTypeDockerSchema2ManifestList, ocispec.MediaTypeImageIndex:
+		return append([]ocispec.Descriptor{manifest.Config}, manifest.Layers...), nil
+	} else if IsIndexType(desc.MediaType) {
 		p, err := content.ReadBlob(ctx, provider, desc)
 		if err != nil {
 			return nil, err
@@ -372,16 +365,12 @@ func Children(ctx context.Context, provider content.Provider, desc ocispec.Descr
 			return nil, err
 		}
 
-		descs = append(descs, index.Manifests...)
-	default:
-		if IsLayerType(desc.MediaType) || IsKnownConfig(desc.MediaType) {
-			// childless data types.
-			return nil, nil
-		}
+		return append([]ocispec.Descriptor{}, index.Manifests...), nil
+	} else if !IsLayerType(desc.MediaType) && !IsKnownConfig(desc.MediaType) {
+		// Layers and configs are childless data types and should not be logged.
 		log.G(ctx).Debugf("encountered unknown type %v; children may not be fetched", desc.MediaType)
 	}
-
-	return descs, nil
+	return nil, nil
 }
 
 // unknownDocument represents a manifest, manifest list, or index that has not
@@ -394,9 +383,10 @@ type unknownDocument struct {
 	FSLayers  json.RawMessage `json:"fsLayers,omitempty"` // schema 1
 }
 
-// validateMediaType returns an error if the byte slice is invalid JSON or if
-// the media type identifies the blob as one format but it contains elements of
-// another format.
+// validateMediaType returns an error if the byte slice is invalid JSON,
+// if the format of the blob is not supported, or if the media type
+// identifies the blob as one format, but it identifies itself as, or
+// contains elements of another format.
 func validateMediaType(b []byte, mt string) error {
 	var doc unknownDocument
 	if err := json.Unmarshal(b, &doc); err != nil {
@@ -405,19 +395,10 @@ func validateMediaType(b []byte, mt string) error {
 	if len(doc.FSLayers) != 0 {
 		return fmt.Errorf("media-type: schema 1 not supported")
 	}
-	switch mt {
-	case MediaTypeDockerSchema2Manifest, ocispec.MediaTypeImageManifest:
-		if len(doc.Manifests) != 0 ||
-			doc.MediaType == MediaTypeDockerSchema2ManifestList ||
-			doc.MediaType == ocispec.MediaTypeImageIndex {
-			return fmt.Errorf("media-type: expected manifest but found index (%s)", mt)
-		}
-	case MediaTypeDockerSchema2ManifestList, ocispec.MediaTypeImageIndex:
-		if len(doc.Config) != 0 || len(doc.Layers) != 0 ||
-			doc.MediaType == MediaTypeDockerSchema2Manifest ||
-			doc.MediaType == ocispec.MediaTypeImageManifest {
-			return fmt.Errorf("media-type: expected index but found manifest (%s)", mt)
-		}
+	if IsManifestType(mt) && (len(doc.Manifests) != 0 || IsIndexType(doc.MediaType)) {
+		return fmt.Errorf("media-type: expected manifest but found index (%s)", mt)
+	} else if IsIndexType(mt) && (len(doc.Config) != 0 || len(doc.Layers) != 0 || IsManifestType(doc.MediaType)) {
+		return fmt.Errorf("media-type: expected index but found manifest (%s)", mt)
 	}
 	return nil
 }
@@ -437,4 +418,20 @@ func RootFS(ctx context.Context, provider content.Provider, configDesc ocispec.D
 		return nil, err
 	}
 	return config.RootFS.DiffIDs, nil
+}
+
+// ConfigPlatform returns a normalized platform from an image manifest config.
+func ConfigPlatform(ctx context.Context, provider content.Provider, configDesc ocispec.Descriptor) (ocispec.Platform, error) {
+	p, err := content.ReadBlob(ctx, provider, configDesc)
+	if err != nil {
+		return ocispec.Platform{}, err
+	}
+
+	// Technically, this should be ocispec.Image, but we only need the
+	// ocispec.Platform that is embedded in the image struct.
+	var imagePlatform ocispec.Platform
+	if err := json.Unmarshal(p, &imagePlatform); err != nil {
+		return ocispec.Platform{}, err
+	}
+	return platforms.Normalize(imagePlatform), nil
 }

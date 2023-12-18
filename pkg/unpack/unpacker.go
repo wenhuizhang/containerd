@@ -18,32 +18,31 @@ package unpack
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/diff"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/labels"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/mount"
-	"github.com/containerd/containerd/pkg/cleanup"
-	"github.com/containerd/containerd/pkg/kmutex"
-	"github.com/containerd/containerd/platforms"
-	"github.com/containerd/containerd/snapshots"
-	"github.com/containerd/containerd/tracing"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/diff"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/labels"
+	"github.com/containerd/containerd/v2/mount"
+	"github.com/containerd/containerd/v2/pkg/cleanup"
+	"github.com/containerd/containerd/v2/pkg/kmutex"
+	"github.com/containerd/containerd/v2/platforms"
+	"github.com/containerd/containerd/v2/snapshots"
+	"github.com/containerd/containerd/v2/tracing"
+	"github.com/containerd/log"
 	"github.com/opencontainers/go-digest"
 	"github.com/opencontainers/image-spec/identity"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 )
@@ -180,8 +179,7 @@ func (u *Unpacker) Unpack(h images.Handler) images.Handler {
 			return children, err
 		}
 
-		switch desc.MediaType {
-		case images.MediaTypeDockerSchema2Manifest, ocispec.MediaTypeImageManifest:
+		if images.IsManifestType(desc.MediaType) {
 			var nonLayers []ocispec.Descriptor
 			var manifestLayers []ocispec.Descriptor
 			// Split layers from non-layers, layers will be handled after
@@ -204,7 +202,7 @@ func (u *Unpacker) Unpack(h images.Handler) images.Handler {
 			lock.Unlock()
 
 			children = nonLayers
-		case images.MediaTypeDockerSchema2Config, ocispec.MediaTypeImageConfig:
+		} else if images.IsConfigType(desc.MediaType) {
 			lock.Lock()
 			l := layers[desc.Digest]
 			lock.Unlock()
@@ -237,6 +235,7 @@ func (u *Unpacker) unpack(
 	ctx := u.ctx
 	ctx, layerSpan := tracing.StartSpan(ctx, tracing.Name(unpackSpanPrefix, "unpack"))
 	defer layerSpan.End()
+	unpackStart := time.Now()
 	p, err := content.ReadBlob(ctx, u.content, config)
 	if err != nil {
 		return err
@@ -254,7 +253,7 @@ func (u *Unpacker) unpack(
 	// TODO: Support multiple unpacks rather than just first match
 	var unpack *Platform
 
-	imgPlatform := platforms.Normalize(ocispec.Platform{OS: i.OS, Architecture: i.Architecture})
+	imgPlatform := platforms.Normalize(i.Platform)
 	for _, up := range u.platforms {
 		if up.Platform.Match(imgPlatform) {
 			unpack = up
@@ -413,6 +412,7 @@ func (u *Unpacker) unpack(
 
 	for i, desc := range layers {
 		_, layerSpan := tracing.StartSpan(ctx, tracing.Name(unpackSpanPrefix, "unpackLayer"))
+		unpackLayerStart := time.Now()
 		layerSpan.SetAttributes(
 			tracing.Attribute("layer.media.type", desc.MediaType),
 			tracing.Attribute("layer.media.size", desc.Size),
@@ -424,6 +424,10 @@ func (u *Unpacker) unpack(
 			return err
 		}
 		layerSpan.End()
+		log.G(ctx).WithFields(log.Fields{
+			"layer":    desc.Digest,
+			"duration": time.Since(unpackLayerStart),
+		}).Debug("layer unpacked")
 	}
 
 	chainID := identity.ChainID(chain).String()
@@ -437,9 +441,10 @@ func (u *Unpacker) unpack(
 	if err != nil {
 		return err
 	}
-	log.G(ctx).WithFields(logrus.Fields{
-		"config":  config.Digest,
-		"chainID": chainID,
+	log.G(ctx).WithFields(log.Fields{
+		"config":   config.Digest,
+		"chainID":  chainID,
+		"duration": time.Since(unpackStart),
 	}).Debug("image unpacked")
 
 	return nil

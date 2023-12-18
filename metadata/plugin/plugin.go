@@ -22,13 +22,16 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/metadata"
-	"github.com/containerd/containerd/pkg/timeout"
-	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/snapshots"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/events"
+	"github.com/containerd/containerd/v2/metadata"
+	"github.com/containerd/containerd/v2/pkg/timeout"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/containerd/v2/snapshots"
+	"github.com/containerd/log"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 
 	bolt "go.etcd.io/bbolt"
 )
@@ -80,41 +83,40 @@ func (bc *BoltConfig) Validate() error {
 }
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.MetadataPlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.MetadataPlugin,
 		ID:   "bolt",
 		Requires: []plugin.Type{
-			plugin.ContentPlugin,
-			plugin.SnapshotPlugin,
+			plugins.ContentPlugin,
+			plugins.EventPlugin,
+			plugins.SnapshotPlugin,
 		},
 		Config: &BoltConfig{
 			ContentSharingPolicy: SharingPolicyShared,
 		},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			if err := os.MkdirAll(ic.Root, 0711); err != nil {
+			root := ic.Properties[plugins.PropertyRootDir]
+			if err := os.MkdirAll(root, 0711); err != nil {
 				return nil, err
 			}
-			cs, err := ic.Get(plugin.ContentPlugin)
+			cs, err := ic.GetSingle(plugins.ContentPlugin)
 			if err != nil {
 				return nil, err
 			}
 
-			snapshottersRaw, err := ic.GetByType(plugin.SnapshotPlugin)
+			snapshottersRaw, err := ic.GetByType(plugins.SnapshotPlugin)
 			if err != nil {
 				return nil, err
 			}
 
 			snapshotters := make(map[string]snapshots.Snapshotter)
 			for name, sn := range snapshottersRaw {
-				sn, err := sn.Instance()
-				if err != nil {
-					if !plugin.IsSkipPlugin(err) {
-						log.G(ic.Context).WithError(err).
-							Warnf("could not use snapshotter %v in metadata plugin", name)
-					}
-					continue
-				}
 				snapshotters[name] = sn.(snapshots.Snapshotter)
+			}
+
+			ep, err := ic.GetSingle(plugins.EventPlugin)
+			if err != nil {
+				return nil, err
 			}
 
 			shared := true
@@ -133,7 +135,7 @@ func init() {
 				}
 			}
 
-			path := filepath.Join(ic.Root, "meta.db")
+			path := filepath.Join(root, "meta.db")
 			ic.Meta.Exports["path"] = path
 
 			options := *bolt.DefaultOptions
@@ -163,7 +165,7 @@ func init() {
 			}
 
 			dbopts := []metadata.DBOpt{
-				metadata.WithEventsPublisher(ic.Events),
+				metadata.WithEventsPublisher(ep.(events.Publisher)),
 			}
 
 			if !shared {

@@ -27,8 +27,8 @@ import (
 	"github.com/stretchr/testify/require"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 
-	criconfig "github.com/containerd/containerd/pkg/cri/config"
-	servertesting "github.com/containerd/containerd/pkg/cri/server/testing"
+	criconfig "github.com/containerd/containerd/v2/pkg/cri/config"
+	servertesting "github.com/containerd/containerd/v2/pkg/cri/testing"
 )
 
 func TestUpdateRuntimeConfig(t *testing.T) {
@@ -70,29 +70,35 @@ func TestUpdateRuntimeConfig(t *testing.T) {
 }`
 	)
 
-	for name, test := range map[string]struct {
+	for _, test := range []struct {
+		name            string
 		noTemplate      bool
 		emptyCIDR       bool
 		networkReady    bool
 		expectCNIConfig bool
 	}{
-		"should not generate cni config if cidr is empty": {
+		{
+			name:            "should not generate cni config if cidr is empty",
 			emptyCIDR:       true,
 			expectCNIConfig: false,
 		},
-		"should not generate cni config if template file is not specified": {
+		{
+			name:            "should not generate cni config if template file is not specified",
 			noTemplate:      true,
 			expectCNIConfig: false,
 		},
-		"should not generate cni config if network is ready": {
+		{
+			name:            "should not generate cni config if network is ready",
 			networkReady:    true,
 			expectCNIConfig: false,
 		},
-		"should generate cni config if template is specified and cidr is provided": {
+		{
+			name:            "should generate cni config if template is specified and cidr is provided",
 			expectCNIConfig: true,
 		},
 	} {
-		t.Run(name, func(t *testing.T) {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
 			testDir := t.TempDir()
 			templateName := filepath.Join(testDir, "template")
 			err := os.WriteFile(templateName, []byte(testTemplate), 0666)

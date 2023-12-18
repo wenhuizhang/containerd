@@ -18,12 +18,11 @@ package client
 
 import (
 	"context"
-	"runtime"
 	"testing"
 
-	. "github.com/containerd/containerd"
-	"github.com/containerd/containerd/snapshots"
-	"github.com/containerd/containerd/snapshots/testsuite"
+	. "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/snapshots"
+	"github.com/containerd/containerd/v2/snapshots/testsuite"
 )
 
 func newSnapshotter(ctx context.Context, root string) (snapshots.Snapshotter, func() error, error) {
@@ -44,8 +43,6 @@ func TestSnapshotterClient(t *testing.T) {
 	if testing.Short() {
 		t.Skip()
 	}
-	if runtime.GOOS == "windows" {
-		t.Skip("snapshots not yet supported on Windows")
-	}
+
 	testsuite.SnapshotterSuite(t, DefaultSnapshotter, newSnapshotter)
 }

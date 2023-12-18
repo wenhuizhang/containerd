@@ -20,15 +20,17 @@ import (
 	"context"
 	"io"
 
-	eventstypes "github.com/containerd/containerd/api/events"
-	api "github.com/containerd/containerd/api/services/containers/v1"
-	"github.com/containerd/containerd/containers"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/events"
-	"github.com/containerd/containerd/metadata"
-	"github.com/containerd/containerd/plugin"
-	ptypes "github.com/containerd/containerd/protobuf/types"
-	"github.com/containerd/containerd/services"
+	eventstypes "github.com/containerd/containerd/v2/api/events"
+	api "github.com/containerd/containerd/v2/api/services/containers/v1"
+	"github.com/containerd/containerd/v2/containers"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/events"
+	"github.com/containerd/containerd/v2/metadata"
+	"github.com/containerd/containerd/v2/plugins"
+	ptypes "github.com/containerd/containerd/v2/protobuf/types"
+	"github.com/containerd/containerd/v2/services"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 	bolt "go.etcd.io/bbolt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -37,19 +39,19 @@ import (
 )
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.ServicePlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.ServicePlugin,
 		ID:   services.ContainersService,
 		Requires: []plugin.Type{
-			plugin.EventPlugin,
-			plugin.MetadataPlugin,
+			plugins.EventPlugin,
+			plugins.MetadataPlugin,
 		},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			m, err := ic.Get(plugin.MetadataPlugin)
+			m, err := ic.GetSingle(plugins.MetadataPlugin)
 			if err != nil {
 				return nil, err
 			}
-			ep, err := ic.Get(plugin.EventPlugin)
+			ep, err := ic.GetSingle(plugins.EventPlugin)
 			if err != nil {
 				return nil, err
 			}

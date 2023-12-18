@@ -21,8 +21,8 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/typeurl"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/typeurl/v2"
 )
 
 var register = struct {

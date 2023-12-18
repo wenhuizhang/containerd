@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 
-	sandboxstore "github.com/containerd/containerd/pkg/cri/store/sandbox"
+	sandboxstore "github.com/containerd/containerd/v2/pkg/cri/store/sandbox"
 )
 
 func TestPodSandboxStatus(t *testing.T) {
@@ -87,30 +87,31 @@ func TestPodSandboxStatus(t *testing.T) {
 		Annotations:    config.GetAnnotations(),
 		RuntimeHandler: "test-runtime-handler",
 	}
-	for desc, test := range map[string]struct {
-		state         sandboxstore.State
+	for _, test := range []struct {
+		desc          string
+		state         string
 		expectedState runtime.PodSandboxState
 	}{
-		"sandbox state ready": {
-			state:         sandboxstore.StateReady,
+		{
+			desc:          "sandbox state ready",
+			state:         sandboxstore.StateReady.String(),
 			expectedState: runtime.PodSandboxState_SANDBOX_READY,
 		},
-		"sandbox state not ready": {
-			state:         sandboxstore.StateNotReady,
+		{
+			desc:          "sandbox state not ready",
+			state:         sandboxstore.StateNotReady.String(),
 			expectedState: runtime.PodSandboxState_SANDBOX_NOTREADY,
 		},
-		"sandbox state unknown": {
-			state:         sandboxstore.StateUnknown,
+		{
+			desc:          "sandbox state unknown",
+			state:         sandboxstore.StateUnknown.String(),
 			expectedState: runtime.PodSandboxState_SANDBOX_NOTREADY,
 		},
 	} {
-		t.Run(desc, func(t *testing.T) {
-			status := sandboxstore.Status{
-				CreatedAt: createdAt,
-				State:     test.state,
-			}
+		test := test
+		t.Run(test.desc, func(t *testing.T) {
 			expected.State = test.expectedState
-			got := toCRISandboxStatus(metadata, status, ip, additionalIPs)
+			got := toCRISandboxStatus(metadata, test.state, createdAt, ip, additionalIPs)
 			assert.Equal(t, expected, got)
 		})
 	}

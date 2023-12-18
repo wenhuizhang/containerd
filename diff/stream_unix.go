@@ -25,12 +25,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"sync"
 
-	"github.com/containerd/containerd/protobuf"
-	"github.com/containerd/containerd/protobuf/proto"
-	"github.com/containerd/typeurl"
-	exec "golang.org/x/sys/execabs"
+	"github.com/containerd/containerd/v2/protobuf"
+	"github.com/containerd/containerd/v2/protobuf/proto"
+	"github.com/containerd/typeurl/v2"
 )
 
 // NewBinaryProcessor returns a binary processor for use with processing content streams

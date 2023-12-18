@@ -21,14 +21,15 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/containerd/containerd/cmd/containerd/command"
-	"github.com/containerd/containerd/pkg/hasher"
-	"github.com/containerd/containerd/pkg/seed"
+	"github.com/containerd/containerd/v2/cmd/containerd/command"
+	"github.com/containerd/containerd/v2/pkg/hasher"
+	"github.com/containerd/containerd/v2/pkg/seed" //nolint:staticcheck // Global math/rand seed is deprecated, but still used by external dependencies
 
-	_ "github.com/containerd/containerd/cmd/containerd/builtins"
+	_ "github.com/containerd/containerd/v2/cmd/containerd/builtins"
 )
 
 func init() {
+	//nolint:staticcheck // Global math/rand seed is deprecated, but still used by external dependencies
 	seed.WithTimeAndRand()
 	crypto.RegisterHash(crypto.SHA256, hasher.NewSHA256)
 }

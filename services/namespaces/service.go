@@ -18,32 +18,25 @@ package namespaces
 
 import (
 	"context"
-	"errors"
 
-	api "github.com/containerd/containerd/api/services/namespaces/v1"
-	"github.com/containerd/containerd/plugin"
-	ptypes "github.com/containerd/containerd/protobuf/types"
-	"github.com/containerd/containerd/services"
+	api "github.com/containerd/containerd/v2/api/services/namespaces/v1"
+	"github.com/containerd/containerd/v2/plugins"
+	ptypes "github.com/containerd/containerd/v2/protobuf/types"
+	"github.com/containerd/containerd/v2/services"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 	"google.golang.org/grpc"
 )
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.GRPCPlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.GRPCPlugin,
 		ID:   "namespaces",
 		Requires: []plugin.Type{
-			plugin.ServicePlugin,
+			plugins.ServicePlugin,
 		},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			plugins, err := ic.GetByType(plugin.ServicePlugin)
-			if err != nil {
-				return nil, err
-			}
-			p, ok := plugins[services.NamespacesService]
-			if !ok {
-				return nil, errors.New("namespaces service not found")
-			}
-			i, err := p.Instance()
+			i, err := ic.GetByID(plugins.ServicePlugin, services.NamespacesService)
 			if err != nil {
 				return nil, err
 			}

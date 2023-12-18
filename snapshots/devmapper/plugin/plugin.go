@@ -20,15 +20,18 @@ package plugin
 
 import (
 	"errors"
+	"fmt"
 
-	"github.com/containerd/containerd/platforms"
-	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/snapshots/devmapper"
+	"github.com/containerd/containerd/v2/platforms"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/containerd/v2/snapshots/devmapper"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 )
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type:   plugin.SnapshotPlugin,
+	registry.Register(&plugin.Registration{
+		Type:   plugins.SnapshotPlugin,
 		ID:     "devmapper",
 		Config: &devmapper.Config{},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
@@ -40,11 +43,11 @@ func init() {
 			}
 
 			if config.PoolName == "" {
-				return nil, errors.New("devmapper not configured")
+				return nil, fmt.Errorf("devmapper not configured: %w", plugin.ErrSkipPlugin)
 			}
 
 			if config.RootPath == "" {
-				config.RootPath = ic.Root
+				config.RootPath = ic.Properties[plugins.PropertyRootDir]
 			}
 
 			return devmapper.NewSnapshotter(ic.Context, config)

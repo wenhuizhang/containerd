@@ -18,9 +18,12 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
-	sandboxstore "github.com/containerd/containerd/pkg/cri/store/sandbox"
+	"github.com/containerd/containerd/v2/errdefs"
+	sandboxstore "github.com/containerd/containerd/v2/pkg/cri/store/sandbox"
+	"github.com/containerd/log"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -31,21 +34,21 @@ func (c *criService) ListPodSandboxStats(
 ) (*runtime.ListPodSandboxStatsResponse, error) {
 	sandboxes := c.sandboxesForListPodSandboxStatsRequest(r)
 
+	var errs []error
 	podSandboxStats := new(runtime.ListPodSandboxStatsResponse)
 	for _, sandbox := range sandboxes {
-		metrics, err := metricsForSandbox(sandbox)
-		if err != nil {
-			return nil, fmt.Errorf("failed to obtain metrics for sandbox %q: %w", sandbox.ID, err)
+		sandboxStats, err := c.podSandboxStats(ctx, sandbox)
+		switch {
+		case errdefs.IsUnavailable(err):
+			log.G(ctx).WithField("podsandboxid", sandbox.ID).Debugf("failed to get pod sandbox stats, this is likely a transient error: %v", err)
+		case err != nil:
+			errs = append(errs, fmt.Errorf("failed to decode sandbox container metrics for sandbox %q: %w", sandbox.ID, err))
+		default:
+			podSandboxStats.Stats = append(podSandboxStats.Stats, sandboxStats)
 		}
-
-		sandboxStats, err := c.podSandboxStats(ctx, sandbox, metrics)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode sandbox container metrics for sandbox %q: %w", sandbox.ID, err)
-		}
-		podSandboxStats.Stats = append(podSandboxStats.Stats, sandboxStats)
 	}
 
-	return podSandboxStats, nil
+	return podSandboxStats, errors.Join(errs...)
 }
 
 func (c *criService) sandboxesForListPodSandboxStatsRequest(r *runtime.ListPodSandboxStatsRequest) []sandboxstore.Sandbox {

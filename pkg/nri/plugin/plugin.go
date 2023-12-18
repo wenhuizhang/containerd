@@ -17,13 +17,15 @@
 package plugin
 
 import (
-	"github.com/containerd/containerd/pkg/nri"
-	"github.com/containerd/containerd/plugin"
+	"github.com/containerd/containerd/v2/pkg/nri"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 )
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type:   plugin.NRIApiPlugin,
+	registry.Register(&plugin.Registration{
+		Type:   plugins.NRIApiPlugin,
 		ID:     "nri",
 		Config: nri.DefaultConfig(),
 		InitFn: initFunc,

@@ -23,16 +23,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/containerd/containerd/containers"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/filters"
-	"github.com/containerd/containerd/identifiers"
-	"github.com/containerd/containerd/labels"
-	"github.com/containerd/containerd/metadata/boltutil"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/protobuf/proto"
-	"github.com/containerd/containerd/protobuf/types"
-	"github.com/containerd/typeurl"
+	"github.com/containerd/containerd/v2/containers"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/filters"
+	"github.com/containerd/containerd/v2/identifiers"
+	"github.com/containerd/containerd/v2/labels"
+	"github.com/containerd/containerd/v2/metadata/boltutil"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/containerd/v2/protobuf/proto"
+	"github.com/containerd/containerd/v2/protobuf/types"
+	"github.com/containerd/typeurl/v2"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -337,17 +337,17 @@ func readContainer(container *containers.Container, bkt *bolt.Bucket) error {
 				container.Runtime.Name = string(n)
 			}
 
-			any, err := boltutil.ReadAny(rbkt, bucketKeyOptions)
+			o, err := boltutil.ReadAny(rbkt, bucketKeyOptions)
 			if err != nil {
 				return err
 			}
-			container.Runtime.Options = any
+			container.Runtime.Options = o
 		case string(bucketKeySpec):
-			var any types.Any
-			if err := proto.Unmarshal(v, &any); err != nil {
+			var spec types.Any
+			if err := proto.Unmarshal(v, &spec); err != nil {
 				return err
 			}
-			container.Spec = &any
+			container.Spec = &spec
 		case string(bucketKeySnapshotKey):
 			container.SnapshotKey = string(v)
 		case string(bucketKeySnapshotter):

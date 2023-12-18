@@ -18,15 +18,17 @@ package plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"time"
 
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/tracing"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/containerd/v2/tracing"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
@@ -35,22 +37,18 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.12.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 )
 
 const exporterPlugin = "otlp"
 
 func init() {
-	plugin.Register(&plugin.Registration{
+	registry.Register(&plugin.Registration{
 		ID:     exporterPlugin,
-		Type:   plugin.TracingProcessorPlugin,
+		Type:   plugins.TracingProcessorPlugin,
 		Config: &OTLPConfig{},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
 			cfg := ic.Config.(*OTLPConfig)
-			if cfg.Endpoint == "" {
-				return nil, fmt.Errorf("no OpenTelemetry endpoint: %w", plugin.ErrSkipPlugin)
-			}
 			exp, err := newExporter(ic.Context, cfg)
 			if err != nil {
 				return nil, err
@@ -58,30 +56,25 @@ func init() {
 			return trace.NewBatchSpanProcessor(exp), nil
 		},
 	})
-	plugin.Register(&plugin.Registration{
-		ID:       "tracing",
-		Type:     plugin.InternalPlugin,
-		Requires: []plugin.Type{plugin.TracingProcessorPlugin},
-		Config:   &TraceConfig{ServiceName: "containerd", TraceSamplingRatio: 1.0},
+	registry.Register(&plugin.Registration{
+		ID:   "tracing",
+		Type: plugins.InternalPlugin,
+		Requires: []plugin.Type{
+			plugins.TracingProcessorPlugin,
+		},
+		Config: &TraceConfig{
+			ServiceName:        "containerd",
+			TraceSamplingRatio: 1.0,
+		},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			//get TracingProcessorPlugin which is a dependency
-			plugins, err := ic.GetByType(plugin.TracingProcessorPlugin)
+			// get TracingProcessorPlugin which is a dependency
+			plugins, err := ic.GetByType(plugins.TracingProcessorPlugin)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get tracing processors: %w", err)
 			}
-			procs := make([]sdktrace.SpanProcessor, 0, len(plugins))
-			for id, pctx := range plugins {
-				p, err := pctx.Instance()
-				if err != nil {
-					if plugin.IsSkipPlugin(err) {
-						log.G(ic.Context).WithError(err).Infof("skipping tracing processor initialization (no tracing plugin)")
-					} else {
-						log.G(ic.Context).WithError(err).Errorf("failed to initialize a tracing processor %q", id)
-					}
-					continue
-				}
-				proc := p.(sdktrace.SpanProcessor)
-				procs = append(procs, proc)
+			procs := make([]trace.SpanProcessor, 0, len(plugins))
+			for _, p := range plugins {
+				procs = append(procs, p.(trace.SpanProcessor))
 			}
 			return newTracer(ic.Context, ic.Config.(*TraceConfig), procs)
 		},
@@ -122,27 +115,30 @@ func newExporter(ctx context.Context, cfg *OTLPConfig) (*otlptrace.Exporter, err
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	if cfg.Protocol == "http/protobuf" || cfg.Protocol == "" {
-		u, err := url.Parse(cfg.Endpoint)
-		if err != nil {
-			return nil, fmt.Errorf("OpenTelemetry endpoint %q %w : %v", cfg.Endpoint, errdefs.ErrInvalidArgument, err)
-		}
-		opts := []otlptracehttp.Option{
-			otlptracehttp.WithEndpoint(u.Host),
-		}
-		if u.Scheme == "http" {
-			opts = append(opts, otlptracehttp.WithInsecure())
+	switch cfg.Protocol {
+	case "", "http/protobuf":
+		var opts []otlptracehttp.Option
+		if cfg.Endpoint != "" {
+			u, err := url.Parse(cfg.Endpoint)
+			if err != nil {
+				return nil, fmt.Errorf("OpenTelemetry endpoint %q %w : %v", cfg.Endpoint, errdefs.ErrInvalidArgument, err)
+			}
+			opts = append(opts, otlptracehttp.WithEndpoint(u.Host))
+			if u.Scheme == "http" {
+				opts = append(opts, otlptracehttp.WithInsecure())
+			}
 		}
 		return otlptracehttp.New(ctx, opts...)
-	} else if cfg.Protocol == "grpc" {
-		opts := []otlptracegrpc.Option{
-			otlptracegrpc.WithEndpoint(cfg.Endpoint),
+	case "grpc":
+		var opts []otlptracegrpc.Option
+		if cfg.Endpoint != "" {
+			opts = append(opts, otlptracegrpc.WithEndpoint(cfg.Endpoint))
 		}
 		if cfg.Insecure {
 			opts = append(opts, otlptracegrpc.WithInsecure())
 		}
 		return otlptracegrpc.New(ctx, opts...)
-	} else {
+	default:
 		// Other protocols such as "http/json" are not supported.
 		return nil, fmt.Errorf("OpenTelemetry protocol %q : %w", cfg.Protocol, errdefs.ErrNotImplemented)
 	}
@@ -152,8 +148,7 @@ func newExporter(ctx context.Context, cfg *OTLPConfig) (*otlptrace.Exporter, err
 // its sampling ratio and returns io.Closer.
 //
 // Note that this function sets process-wide tracing configuration.
-func newTracer(ctx context.Context, config *TraceConfig, procs []sdktrace.SpanProcessor) (io.Closer, error) {
-
+func newTracer(ctx context.Context, config *TraceConfig, procs []trace.SpanProcessor) (io.Closer, error) {
 	res, err := resource.New(ctx,
 		resource.WithHost(),
 		resource.WithAttributes(
@@ -165,18 +160,18 @@ func newTracer(ctx context.Context, config *TraceConfig, procs []sdktrace.SpanPr
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
-	sampler := sdktrace.ParentBased(sdktrace.TraceIDRatioBased(config.TraceSamplingRatio))
+	sampler := trace.ParentBased(trace.TraceIDRatioBased(config.TraceSamplingRatio))
 
-	opts := []sdktrace.TracerProviderOption{
-		sdktrace.WithSampler(sampler),
-		sdktrace.WithResource(res),
+	opts := []trace.TracerProviderOption{
+		trace.WithSampler(sampler),
+		trace.WithResource(res),
 	}
 
 	for _, proc := range procs {
-		opts = append(opts, sdktrace.WithSpanProcessor(proc))
+		opts = append(opts, trace.WithSpanProcessor(proc))
 	}
 
-	provider := sdktrace.NewTracerProvider(opts...)
+	provider := trace.NewTracerProvider(opts...)
 
 	otel.SetTracerProvider(provider)
 
@@ -184,13 +179,12 @@ func newTracer(ctx context.Context, config *TraceConfig, procs []sdktrace.SpanPr
 
 	return &closer{close: func() error {
 		for _, p := range procs {
-			if err := p.Shutdown(ctx); err != nil {
+			if err := p.Shutdown(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				return err
 			}
 		}
 		return nil
 	}}, nil
-
 }
 
 // Returns a composite TestMap propagator

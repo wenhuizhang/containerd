@@ -19,11 +19,12 @@ package server
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 
-	cni "github.com/containerd/go-cni"
+	"github.com/containerd/go-cni"
+	"github.com/containerd/log"
 	"github.com/fsnotify/fsnotify"
-	"github.com/sirupsen/logrus"
 )
 
 // cniNetConfSyncer is used to reload cni network conf triggered by fs change
@@ -46,6 +47,13 @@ func newCNINetConfSyncer(confDir string, netPlugin cni.CNI, loadOpts []cni.Opt) 
 		return nil, fmt.Errorf("failed to create fsnotify watcher: %w", err)
 	}
 
+	// /etc/cni has to be readable for non-root users (0755), because /etc/cni/tuning/allowlist.conf is used for rootless mode too.
+	// This file was introduced in CNI plugins 1.2.0 (https://github.com/containernetworking/plugins/pull/693), and its path is hard-coded.
+	confDirParent := filepath.Dir(confDir)
+	if err := os.MkdirAll(confDirParent, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create the parent of the cni conf dir=%s: %w", confDirParent, err)
+	}
+
 	if err := os.MkdirAll(confDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create cni conf dir=%s for watch: %w", confDir, err)
 	}
@@ -62,7 +70,7 @@ func newCNINetConfSyncer(confDir string, netPlugin cni.CNI, loadOpts []cni.Opt) 
 	}
 
 	if err := syncer.netPlugin.Load(syncer.loadOpts...); err != nil {
-		logrus.WithError(err).Error("failed to load cni during init, please check CRI plugin status before setting up network for pods")
+		log.L.WithError(err).Error("failed to load cni during init, please check CRI plugin status before setting up network for pods")
 		syncer.updateLastStatus(err)
 	}
 	return syncer, nil
@@ -75,7 +83,7 @@ func (syncer *cniNetConfSyncer) syncLoop() error {
 		select {
 		case event, ok := <-syncer.watcher.Events:
 			if !ok {
-				logrus.Debugf("cni watcher channel is closed")
+				log.L.Debugf("cni watcher channel is closed")
 				return nil
 			}
 			// Only reload config when receiving write/rename/remove
@@ -84,21 +92,21 @@ func (syncer *cniNetConfSyncer) syncLoop() error {
 			// TODO(fuweid): Might only reload target cni config
 			// files to prevent no-ops.
 			if event.Has(fsnotify.Chmod) || event.Has(fsnotify.Create) {
-				logrus.Debugf("ignore event from cni conf dir: %s", event)
+				log.L.Debugf("ignore event from cni conf dir: %s", event)
 				continue
 			}
-			logrus.Debugf("receiving change event from cni conf dir: %s", event)
+			log.L.Debugf("receiving change event from cni conf dir: %s", event)
 
 			lerr := syncer.netPlugin.Load(syncer.loadOpts...)
 			if lerr != nil {
-				logrus.WithError(lerr).
+				log.L.WithError(lerr).
 					Errorf("failed to reload cni configuration after receiving fs change event(%s)", event)
 			}
 			syncer.updateLastStatus(lerr)
 
 		case err := <-syncer.watcher.Errors:
 			if err != nil {
-				logrus.WithError(err).Error("failed to continue sync cni conf change")
+				log.L.WithError(err).Error("failed to continue sync cni conf change")
 				return err
 			}
 		}

@@ -22,7 +22,7 @@ For each `containerd` release, we'll publish a release tarball specifically for 
 ### Content
 As shown below, the release tarball contains:
 
-- `containerd`, `containerd-shim`, `containerd-shim-runc-v1`, `containerd-shim-runc-v2`, `ctr`: binaries for containerd.
+- `containerd`, `containerd-shim-runc-v2`, `ctr`: binaries for containerd.
 - `runc`: runc binary.
 - `/opt/cni/bin`: binaries for [Container Network Interface](https://github.com/containernetworking/cni)
 - `crictl`, `crictl.yaml`: command line tools for CRI container runtime and its config file.
@@ -106,7 +106,7 @@ sudo apt-get update
 sudo apt-get install libseccomp2
 ```
 Note that:
-1) If you are using Ubuntu <=Trusty or Debian <=jessie, a backported version of `libseccomp2` is needed. (See the [trusty-backports](https://packages.ubuntu.com/trusty-backports/libseccomp2) and [jessie-backports](https://packages.debian.org/jessie-backports/libseccomp2)).
+1) If you are using Ubuntu <=Trusty or Debian <=jessie, a backported version of `libseccomp2` is needed. (See the [trusty-backports](https://packages.ubuntu.com/trusty-backports/libseccomp2) and [buster-backports](https://packages.debian.org/buster-backports/libseccomp2)).
 ## Step 1: Download Release Tarball
 Download release tarball for the `containerd` version you want to install from the GCS bucket.
 ```bash

@@ -18,11 +18,12 @@ package config
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
-	"github.com/containerd/containerd/plugin"
 	"github.com/stretchr/testify/assert"
+	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	"github.com/containerd/containerd/v2/pkg/deprecation"
 )
 
 func TestValidateConfig(t *testing.T) {
@@ -30,82 +31,8 @@ func TestValidateConfig(t *testing.T) {
 		config      *PluginConfig
 		expectedErr string
 		expected    *PluginConfig
+		warnings    []deprecation.Warning
 	}{
-		"deprecated untrusted_workload_runtime": {
-			config: &PluginConfig{
-				ContainerdConfig: ContainerdConfig{
-					DefaultRuntimeName: RuntimeDefault,
-					UntrustedWorkloadRuntime: Runtime{
-						Type: "untrusted",
-					},
-					Runtimes: map[string]Runtime{
-						RuntimeDefault: {
-							Type: "default",
-						},
-					},
-				},
-			},
-			expected: &PluginConfig{
-				ContainerdConfig: ContainerdConfig{
-					DefaultRuntimeName: RuntimeDefault,
-					UntrustedWorkloadRuntime: Runtime{
-						Type: "untrusted",
-					},
-					Runtimes: map[string]Runtime{
-						RuntimeUntrusted: {
-							Type:        "untrusted",
-							SandboxMode: string(ModePodSandbox),
-						},
-						RuntimeDefault: {
-							Type:        "default",
-							SandboxMode: string(ModePodSandbox),
-						},
-					},
-				},
-			},
-		},
-		"both untrusted_workload_runtime and runtime[untrusted]": {
-			config: &PluginConfig{
-				ContainerdConfig: ContainerdConfig{
-					DefaultRuntimeName: RuntimeDefault,
-					UntrustedWorkloadRuntime: Runtime{
-						Type: "untrusted-1",
-					},
-					Runtimes: map[string]Runtime{
-						RuntimeUntrusted: {
-							Type: "untrusted-2",
-						},
-						RuntimeDefault: {
-							Type: "default",
-						},
-					},
-				},
-			},
-			expectedErr: fmt.Sprintf("conflicting definitions: configuration includes both `untrusted_workload_runtime` and `runtimes[%q]`", RuntimeUntrusted),
-		},
-		"deprecated default_runtime": {
-			config: &PluginConfig{
-				ContainerdConfig: ContainerdConfig{
-					DefaultRuntime: Runtime{
-						Type: "default",
-					},
-				},
-			},
-			expected: &PluginConfig{
-				ContainerdConfig: ContainerdConfig{
-					DefaultRuntime: Runtime{
-						Type: "default",
-					},
-					DefaultRuntimeName: RuntimeDefault,
-					Runtimes: map[string]Runtime{
-						RuntimeDefault: {
-							Type:        "default",
-							SandboxMode: string(ModePodSandbox),
-						},
-					},
-				},
-			},
-		},
 		"no default_runtime_name": {
 			config:      &PluginConfig{},
 			expectedErr: "`default_runtime_name` is empty",
@@ -118,170 +45,13 @@ func TestValidateConfig(t *testing.T) {
 			},
 			expectedErr: "no corresponding runtime configured in `containerd.runtimes` for `containerd` `default_runtime_name = \"default\"",
 		},
-		"deprecated systemd_cgroup for v1 runtime": {
-			config: &PluginConfig{
-				SystemdCgroup: true,
-				ContainerdConfig: ContainerdConfig{
-					DefaultRuntimeName: RuntimeDefault,
-					Runtimes: map[string]Runtime{
-						RuntimeDefault: {
-							Type: plugin.RuntimeLinuxV1,
-						},
-					},
-				},
-			},
-			expected: &PluginConfig{
-				SystemdCgroup: true,
-				ContainerdConfig: ContainerdConfig{
-					DefaultRuntimeName: RuntimeDefault,
-					Runtimes: map[string]Runtime{
-						RuntimeDefault: {
-							Type:        plugin.RuntimeLinuxV1,
-							SandboxMode: string(ModePodSandbox),
-						},
-					},
-				},
-			},
-		},
-		"deprecated systemd_cgroup for v2 runtime": {
-			config: &PluginConfig{
-				SystemdCgroup: true,
-				ContainerdConfig: ContainerdConfig{
-					DefaultRuntimeName: RuntimeDefault,
-					Runtimes: map[string]Runtime{
-						RuntimeDefault: {
-							Type: plugin.RuntimeRuncV1,
-						},
-					},
-				},
-			},
-			expectedErr: fmt.Sprintf("`systemd_cgroup` only works for runtime %s", plugin.RuntimeLinuxV1),
-		},
-		"no_pivot for v1 runtime": {
-			config: &PluginConfig{
-				ContainerdConfig: ContainerdConfig{
-					NoPivot:            true,
-					DefaultRuntimeName: RuntimeDefault,
-					Runtimes: map[string]Runtime{
-						RuntimeDefault: {
-							Type: plugin.RuntimeLinuxV1,
-						},
-					},
-				},
-			},
-			expected: &PluginConfig{
-				ContainerdConfig: ContainerdConfig{
-					NoPivot:            true,
-					DefaultRuntimeName: RuntimeDefault,
-					Runtimes: map[string]Runtime{
-						RuntimeDefault: {
-							Type:        plugin.RuntimeLinuxV1,
-							SandboxMode: string(ModePodSandbox),
-						},
-					},
-				},
-			},
-		},
-		"no_pivot for v2 runtime": {
-			config: &PluginConfig{
-				ContainerdConfig: ContainerdConfig{
-					NoPivot:            true,
-					DefaultRuntimeName: RuntimeDefault,
-					Runtimes: map[string]Runtime{
-						RuntimeDefault: {
-							Type: plugin.RuntimeRuncV1,
-						},
-					},
-				},
-			},
-			expectedErr: fmt.Sprintf("`no_pivot` only works for runtime %s", plugin.RuntimeLinuxV1),
-		},
-		"deprecated runtime_engine for v1 runtime": {
-			config: &PluginConfig{
-				ContainerdConfig: ContainerdConfig{
-					DefaultRuntimeName: RuntimeDefault,
-					Runtimes: map[string]Runtime{
-						RuntimeDefault: {
-							Engine: "runc",
-							Type:   plugin.RuntimeLinuxV1,
-						},
-					},
-				},
-			},
-			expected: &PluginConfig{
-				ContainerdConfig: ContainerdConfig{
-					DefaultRuntimeName: RuntimeDefault,
-					Runtimes: map[string]Runtime{
-						RuntimeDefault: {
-							Engine:      "runc",
-							Type:        plugin.RuntimeLinuxV1,
-							SandboxMode: string(ModePodSandbox),
-						},
-					},
-				},
-			},
-		},
-		"deprecated runtime_engine for v2 runtime": {
-			config: &PluginConfig{
-				ContainerdConfig: ContainerdConfig{
-					DefaultRuntimeName: RuntimeDefault,
-					Runtimes: map[string]Runtime{
-						RuntimeDefault: {
-							Engine: "runc",
-							Type:   plugin.RuntimeRuncV1,
-						},
-					},
-				},
-			},
-			expectedErr: fmt.Sprintf("`runtime_engine` only works for runtime %s", plugin.RuntimeLinuxV1),
-		},
-		"deprecated runtime_root for v1 runtime": {
-			config: &PluginConfig{
-				ContainerdConfig: ContainerdConfig{
-					DefaultRuntimeName: RuntimeDefault,
-					Runtimes: map[string]Runtime{
-						RuntimeDefault: {
-							Root: "/run/containerd/runc",
-							Type: plugin.RuntimeLinuxV1,
-						},
-					},
-				},
-			},
-			expected: &PluginConfig{
-				ContainerdConfig: ContainerdConfig{
-					DefaultRuntimeName: RuntimeDefault,
-					Runtimes: map[string]Runtime{
-						RuntimeDefault: {
-							Root:        "/run/containerd/runc",
-							Type:        plugin.RuntimeLinuxV1,
-							SandboxMode: string(ModePodSandbox),
-						},
-					},
-				},
-			},
-		},
-		"deprecated runtime_root for v2 runtime": {
-			config: &PluginConfig{
-				ContainerdConfig: ContainerdConfig{
-					DefaultRuntimeName: RuntimeDefault,
-					Runtimes: map[string]Runtime{
-						RuntimeDefault: {
-							Root: "/run/containerd/runc",
-							Type: plugin.RuntimeRuncV1,
-						},
-					},
-				},
-			},
-			expectedErr: fmt.Sprintf("`runtime_root` only works for runtime %s", plugin.RuntimeLinuxV1),
-		},
+
 		"deprecated auths": {
 			config: &PluginConfig{
 				ContainerdConfig: ContainerdConfig{
 					DefaultRuntimeName: RuntimeDefault,
 					Runtimes: map[string]Runtime{
-						RuntimeDefault: {
-							Type: plugin.RuntimeRuncV1,
-						},
+						RuntimeDefault: {},
 					},
 				},
 				Registry: Registry{
@@ -295,8 +65,7 @@ func TestValidateConfig(t *testing.T) {
 					DefaultRuntimeName: RuntimeDefault,
 					Runtimes: map[string]Runtime{
 						RuntimeDefault: {
-							Type:        plugin.RuntimeRuncV1,
-							SandboxMode: string(ModePodSandbox),
+							Sandboxer: string(ModePodSandbox),
 						},
 					},
 				},
@@ -313,6 +82,7 @@ func TestValidateConfig(t *testing.T) {
 					},
 				},
 			},
+			warnings: []deprecation.Warning{deprecation.CRIRegistryAuths},
 		},
 		"invalid stream_idle_timeout": {
 			config: &PluginConfig{
@@ -347,26 +117,75 @@ func TestValidateConfig(t *testing.T) {
 			},
 			expectedErr: "`mirrors` cannot be set when `config_path` is provided",
 		},
-		"conflicting tls registry config": {
+		"deprecated mirrors": {
 			config: &PluginConfig{
 				ContainerdConfig: ContainerdConfig{
 					DefaultRuntimeName: RuntimeDefault,
 					Runtimes: map[string]Runtime{
+						RuntimeDefault: {},
+					},
+				},
+				Registry: Registry{
+					Mirrors: map[string]Mirror{
+						"example.com": {},
+					},
+				},
+			},
+			expected: &PluginConfig{
+				ContainerdConfig: ContainerdConfig{
+					DefaultRuntimeName: RuntimeDefault,
+					Runtimes: map[string]Runtime{
 						RuntimeDefault: {
-							Type: "default",
+							Sandboxer: string(ModePodSandbox),
 						},
 					},
 				},
 				Registry: Registry{
-					ConfigPath: "/etc/containerd/conf.d",
+					Mirrors: map[string]Mirror{
+						"example.com": {},
+					},
+				},
+			},
+			warnings: []deprecation.Warning{deprecation.CRIRegistryMirrors},
+		},
+		"deprecated configs": {
+			config: &PluginConfig{
+				ContainerdConfig: ContainerdConfig{
+					DefaultRuntimeName: RuntimeDefault,
+					Runtimes: map[string]Runtime{
+						RuntimeDefault: {},
+					},
+				},
+				Registry: Registry{
 					Configs: map[string]RegistryConfig{
-						"something.io": {
-							TLS: &TLSConfig{},
+						"gcr.io": {
+							Auth: &AuthConfig{
+								Username: "test",
+							},
 						},
 					},
 				},
 			},
-			expectedErr: "`configs.tls` cannot be set when `config_path` is provided",
+			expected: &PluginConfig{
+				ContainerdConfig: ContainerdConfig{
+					DefaultRuntimeName: RuntimeDefault,
+					Runtimes: map[string]Runtime{
+						RuntimeDefault: {
+							Sandboxer: string(ModePodSandbox),
+						},
+					},
+				},
+				Registry: Registry{
+					Configs: map[string]RegistryConfig{
+						"gcr.io": {
+							Auth: &AuthConfig{
+								Username: "test",
+							},
+						},
+					},
+				},
+			},
+			warnings: []deprecation.Warning{deprecation.CRIRegistryConfigs},
 		},
 		"privileged_without_host_devices_all_devices_allowed without privileged_without_host_devices": {
 			config: &PluginConfig{
@@ -383,14 +202,80 @@ func TestValidateConfig(t *testing.T) {
 			},
 			expectedErr: "`privileged_without_host_devices_all_devices_allowed` requires `privileged_without_host_devices` to be enabled",
 		},
+		"invalid drain_exec_sync_io_timeout input": {
+			config: &PluginConfig{
+				ContainerdConfig: ContainerdConfig{
+					DefaultRuntimeName: RuntimeDefault,
+					Runtimes: map[string]Runtime{
+						RuntimeDefault: {
+							Type: "default",
+						},
+					},
+				},
+				DrainExecSyncIOTimeout: "10",
+			},
+			expectedErr: "invalid `drain_exec_sync_io_timeout`",
+		},
 	} {
 		t.Run(desc, func(t *testing.T) {
-			err := ValidatePluginConfig(context.Background(), test.config)
+			w, err := ValidatePluginConfig(context.Background(), test.config)
 			if test.expectedErr != "" {
 				assert.Contains(t, err.Error(), test.expectedErr)
 			} else {
 				assert.NoError(t, err)
 				assert.Equal(t, test.expected, test.config)
+			}
+			if len(test.warnings) > 0 {
+				assert.ElementsMatch(t, test.warnings, w)
+			} else {
+				assert.Len(t, w, 0)
+			}
+		})
+	}
+}
+
+func TestHostAccessingSandbox(t *testing.T) {
+	privilegedContext := &runtime.PodSandboxConfig{
+		Linux: &runtime.LinuxPodSandboxConfig{
+			SecurityContext: &runtime.LinuxSandboxSecurityContext{
+				Privileged: true,
+			},
+		},
+	}
+	nonPrivilegedContext := &runtime.PodSandboxConfig{
+		Linux: &runtime.LinuxPodSandboxConfig{
+			SecurityContext: &runtime.LinuxSandboxSecurityContext{
+				Privileged: false,
+			},
+		},
+	}
+	hostNamespace := &runtime.PodSandboxConfig{
+		Linux: &runtime.LinuxPodSandboxConfig{
+			SecurityContext: &runtime.LinuxSandboxSecurityContext{
+				Privileged: false,
+				NamespaceOptions: &runtime.NamespaceOption{
+					Network: runtime.NamespaceMode_NODE,
+					Pid:     runtime.NamespaceMode_NODE,
+					Ipc:     runtime.NamespaceMode_NODE,
+				},
+			},
+		},
+	}
+	tests := []struct {
+		name   string
+		config *runtime.PodSandboxConfig
+		want   bool
+	}{
+		{"Security Context is nil", nil, false},
+		{"Security Context is privileged", privilegedContext, false},
+		{"Security Context is not privileged", nonPrivilegedContext, false},
+		{"Security Context namespace host access", hostNamespace, true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hostAccessingSandbox(tt.config); got != tt.want {
+				t.Errorf("hostAccessingSandbox() = %v, want %v", got, tt.want)
 			}
 		})
 	}

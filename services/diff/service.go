@@ -18,31 +18,24 @@ package diff
 
 import (
 	"context"
-	"errors"
 
-	diffapi "github.com/containerd/containerd/api/services/diff/v1"
-	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/services"
+	diffapi "github.com/containerd/containerd/v2/api/services/diff/v1"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/containerd/v2/services"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 	"google.golang.org/grpc"
 )
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.GRPCPlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.GRPCPlugin,
 		ID:   "diff",
 		Requires: []plugin.Type{
-			plugin.ServicePlugin,
+			plugins.ServicePlugin,
 		},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			plugins, err := ic.GetByType(plugin.ServicePlugin)
-			if err != nil {
-				return nil, err
-			}
-			p, ok := plugins[services.DiffService]
-			if !ok {
-				return nil, errors.New("diff service not found")
-			}
-			i, err := p.Instance()
+			i, err := ic.GetByID(plugins.ServicePlugin, services.DiffService)
 			if err != nil {
 				return nil, err
 			}

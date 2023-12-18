@@ -51,6 +51,8 @@ func ExportLayerToTar(ctx context.Context, w io.Writer, path string, parentLayer
 }
 
 func writeTarFromLayer(ctx context.Context, r wclayer.LayerReader, w io.Writer) error {
+	linkRecords := make(map[[16]byte]string)
+
 	t := tar.NewWriter(w)
 	for {
 		select {
@@ -69,13 +71,34 @@ func writeTarFromLayer(ctx context.Context, r wclayer.LayerReader, w io.Writer) 
 		if fileInfo == nil {
 			// Write a whiteout file.
 			hdr := &tar.Header{
-				Name: filepath.ToSlash(filepath.Join(filepath.Dir(name), whiteoutPrefix+filepath.Base(name))),
+				Name: filepath.ToSlash(filepath.Join(filepath.Dir(name), WhiteoutPrefix+filepath.Base(name))),
 			}
 			err := t.WriteHeader(hdr)
 			if err != nil {
 				return err
 			}
 		} else {
+			numberOfLinks, fileIDInfo, err := r.LinkInfo()
+			if err != nil {
+				return err
+			}
+			if numberOfLinks > 1 {
+				if linkName, ok := linkRecords[fileIDInfo.FileID]; ok {
+					// We've seen this file before, by another name, so put a hardlink in the tar stream.
+					hdr := backuptar.BasicInfoHeader(name, 0, fileInfo)
+					hdr.Mode = 0644
+					hdr.Typeflag = tar.TypeLink
+					hdr.Linkname = linkName
+					if err := t.WriteHeader(hdr); err != nil {
+						return err
+					}
+					continue
+				}
+
+				// All subsequent names for this file will be hard-linked to this name
+				linkRecords[fileIDInfo.FileID] = filepath.ToSlash(name)
+			}
+
 			err = backuptar.WriteTarFileFromBackupStream(t, r, name, size, fileInfo)
 			if err != nil {
 				return err

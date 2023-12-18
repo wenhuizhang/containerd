@@ -24,7 +24,7 @@ import (
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"golang.org/x/sys/windows"
 
-	"github.com/containerd/containerd/containers"
+	"github.com/containerd/containerd/v2/containers"
 )
 
 func escapeAndCombineArgs(args []string) string {
@@ -33,6 +33,16 @@ func escapeAndCombineArgs(args []string) string {
 		escaped[i] = windows.EscapeArg(a)
 	}
 	return strings.Join(escaped, " ")
+}
+
+// WithProcessCommandLine replaces the command line on the generated spec
+func WithProcessCommandLine(cmdLine string) SpecOpts {
+	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
+		setProcess(s)
+		s.Process.Args = nil
+		s.Process.CommandLine = cmdLine
+		return nil
+	}
 }
 
 // WithHostDevices adds all the hosts device nodes to the container's spec
@@ -51,4 +61,9 @@ func WithDevices(devicePath, containerPath, permissions string) SpecOpts {
 	return func(ctx context.Context, client Client, container *containers.Container, spec *Spec) error {
 		return nil
 	}
+}
+
+// Windows containers have default path configured at bootup
+func WithDefaultPathEnv(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
+	return nil
 }

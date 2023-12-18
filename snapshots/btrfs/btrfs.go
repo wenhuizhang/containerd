@@ -25,16 +25,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/containerd/btrfs"
+	"github.com/containerd/btrfs/v2"
 	"github.com/containerd/continuity/fs"
 
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/mount"
-	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/snapshots"
-	"github.com/containerd/containerd/snapshots/storage"
-
-	"github.com/sirupsen/logrus"
+	"github.com/containerd/containerd/v2/mount"
+	"github.com/containerd/containerd/v2/snapshots"
+	"github.com/containerd/containerd/v2/snapshots/storage"
+	"github.com/containerd/log"
+	"github.com/containerd/plugin"
 )
 
 type snapshotter struct {
@@ -363,10 +361,10 @@ func (b *snapshotter) Remove(ctx context.Context, key string) (err error) {
 		if restore { // means failed to commit transaction
 			// Attempt to restore source
 			if err1 := btrfs.SubvolSnapshot(source, removed, readonly); err1 != nil {
-				log.G(ctx).WithFields(logrus.Fields{
-					logrus.ErrorKey: err1,
-					"subvolume":     source,
-					"renamed":       removed,
+				log.G(ctx).WithFields(log.Fields{
+					"error":     err1,
+					"subvolume": source,
+					"renamed":   removed,
 				}).Error("failed to restore subvolume from renamed")
 				// Keep removed to allow for manual restore
 				removed = ""

@@ -19,16 +19,18 @@ package transfer
 import (
 	"context"
 
-	transferapi "github.com/containerd/containerd/api/services/transfer/v1"
-	transferTypes "github.com/containerd/containerd/api/types/transfer"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/pkg/streaming"
-	"github.com/containerd/containerd/pkg/transfer"
-	"github.com/containerd/containerd/pkg/transfer/plugins"
-	"github.com/containerd/containerd/plugin"
-	ptypes "github.com/containerd/containerd/protobuf/types"
-	"github.com/containerd/typeurl"
+	transferapi "github.com/containerd/containerd/v2/api/services/transfer/v1"
+	transferTypes "github.com/containerd/containerd/v2/api/types/transfer"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/pkg/streaming"
+	"github.com/containerd/containerd/v2/pkg/transfer"
+	tplugins "github.com/containerd/containerd/v2/pkg/transfer/plugins"
+	"github.com/containerd/containerd/v2/plugins"
+	ptypes "github.com/containerd/containerd/v2/protobuf/types"
+	"github.com/containerd/log"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
+	"github.com/containerd/typeurl/v2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -36,12 +38,12 @@ import (
 )
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.GRPCPlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.GRPCPlugin,
 		ID:   "transfer",
 		Requires: []plugin.Type{
-			plugin.TransferPlugin,
-			plugin.StreamingPlugin,
+			plugins.TransferPlugin,
+			plugins.StreamingPlugin,
 		},
 		InitFn: newService,
 	})
@@ -54,21 +56,17 @@ type service struct {
 }
 
 func newService(ic *plugin.InitContext) (interface{}, error) {
-	plugins, err := ic.GetByType(plugin.TransferPlugin)
+	sps, err := ic.GetByType(plugins.TransferPlugin)
 	if err != nil {
 		return nil, err
 	}
 
 	// TODO: how to determine order?
-	t := make([]transfer.Transferrer, 0, len(plugins))
-	for _, p := range plugins {
-		i, err := p.Instance()
-		if err != nil {
-			return nil, err
-		}
-		t = append(t, i.(transfer.Transferrer))
+	t := make([]transfer.Transferrer, 0, len(sps))
+	for _, p := range sps {
+		t = append(t, p.(transfer.Transferrer))
 	}
-	sp, err := ic.GetByID(plugin.StreamingPlugin, "manager")
+	sp, err := ic.GetByID(plugins.StreamingPlugin, "manager")
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +92,7 @@ func (s *service) Transfer(ctx context.Context, req *transferapi.TransferRequest
 			defer stream.Close()
 
 			pf := func(p transfer.Progress) {
-				any, err := typeurl.MarshalAny(&transferTypes.Progress{
+				progress, err := typeurl.MarshalAny(&transferTypes.Progress{
 					Event:    p.Event,
 					Name:     p.Name,
 					Parents:  p.Parents,
@@ -105,7 +103,7 @@ func (s *service) Transfer(ctx context.Context, req *transferapi.TransferRequest
 					log.G(ctx).WithError(err).Warnf("event could not be marshaled: %v/%v", p.Event, p.Name)
 					return
 				}
-				if err := stream.Send(any); err != nil {
+				if err := stream.Send(progress); err != nil {
 					log.G(ctx).WithError(err).Warnf("event not sent: %v/%v", p.Event, p.Name)
 					return
 				}
@@ -134,7 +132,7 @@ func (s *service) Transfer(ctx context.Context, req *transferapi.TransferRequest
 }
 
 func (s *service) convertAny(ctx context.Context, a typeurl.Any) (interface{}, error) {
-	obj, err := plugins.ResolveType(a)
+	obj, err := tplugins.ResolveType(a)
 	if err != nil {
 		if errdefs.IsNotFound(err) {
 			return typeurl.UnmarshalAny(a)

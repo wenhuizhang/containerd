@@ -23,23 +23,25 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"testing"
 	"time"
 
-	. "github.com/containerd/containerd"
-	"github.com/containerd/containerd/defaults"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/images"
-	imagelist "github.com/containerd/containerd/integration/images"
-	"github.com/containerd/containerd/leases"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/pkg/testutil"
-	"github.com/containerd/containerd/platforms"
 	"github.com/opencontainers/go-digest"
 	"github.com/opencontainers/image-spec/identity"
-	"github.com/sirupsen/logrus"
-	exec "golang.org/x/sys/execabs"
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+
+	. "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/defaults"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/images"
+	imagelist "github.com/containerd/containerd/v2/integration/images"
+	"github.com/containerd/containerd/v2/leases"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/containerd/v2/pkg/testutil"
+	"github.com/containerd/containerd/v2/platforms"
+	"github.com/containerd/log"
 )
 
 var (
@@ -120,7 +122,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// allow comparison with containerd under test
-	log.G(ctx).WithFields(logrus.Fields{
+	log.G(ctx).WithFields(log.Fields{
 		"version":     version.Version,
 		"revision":    version.Revision,
 		"runtime":     os.Getenv("TEST_RUNTIME"),
@@ -187,7 +189,7 @@ func TestMain(m *testing.M) {
 	os.Exit(status)
 }
 
-func newClient(t testing.TB, address string, opts ...ClientOpt) (*Client, error) {
+func newClient(t testing.TB, address string, opts ...Opt) (*Client, error) {
 	if testing.Short() {
 		t.Skip()
 	}
@@ -455,6 +457,34 @@ func TestImagePullWithConcurrencyLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestImagePullWithTracing(t *testing.T) {
+	client, err := newClient(t, address)
+	require.NoError(t, err)
+	defer client.Close()
+
+	ctx := namespaces.WithNamespace(context.Background(), "tracing")
+
+	//create in memory exporter and global tracer provider for test
+	exp, tp := newInMemoryExporterTracer()
+	//set the tracer provider global available
+	otel.SetTracerProvider(tp)
+	// Shutdown properly so nothing leaks.
+	defer func() { _ = tp.Shutdown(ctx) }()
+
+	//do an image pull which is instrumented, we should expect spans in the exporter
+	_, err = client.Pull(ctx, testImage, WithPlatformMatcher(platforms.Default()))
+	require.NoError(t, err)
+
+	err = tp.ForceFlush(ctx)
+	require.NoError(t, err)
+
+	//The span name was defined in client.pull when instrumented it
+	spanNameExpected := "pull.Pull"
+	spans := exp.GetSpans()
+	validateRootSpan(t, spanNameExpected, spans)
+
 }
 
 func TestClientReconnect(t *testing.T) {

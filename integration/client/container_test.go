@@ -22,40 +22,37 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
-	. "github.com/containerd/containerd"
-	apievents "github.com/containerd/containerd/api/events"
-	"github.com/containerd/containerd/cio"
-	"github.com/containerd/containerd/containers"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/log/logtest"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/oci"
-	"github.com/containerd/containerd/platforms"
-	"github.com/containerd/containerd/plugin"
-	gogotypes "github.com/containerd/containerd/protobuf/types"
-	_ "github.com/containerd/containerd/runtime"
-	"github.com/containerd/containerd/runtime/v2/runc/options"
+	apievents "github.com/containerd/containerd/v2/api/events"
+	"github.com/containerd/containerd/v2/cio"
+	. "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/containers"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/containerd/v2/oci"
+	"github.com/containerd/containerd/v2/platforms"
+	"github.com/containerd/containerd/v2/plugins"
+	gogotypes "github.com/containerd/containerd/v2/protobuf/types"
+	_ "github.com/containerd/containerd/v2/runtime"
+	"github.com/containerd/containerd/v2/runtime/v2/runc/options"
+	"github.com/containerd/continuity/fs"
 	"github.com/containerd/go-runc"
-	"github.com/containerd/typeurl"
+	"github.com/containerd/log/logtest"
+	"github.com/containerd/typeurl/v2"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/stretchr/testify/require"
-	exec "golang.org/x/sys/execabs"
 )
 
 func empty() cio.Creator {
-	// TODO (@mlaventure) windows searches for pipes
-	// when none are provided
-	if runtime.GOOS == "windows" {
-		return cio.NewCreator(cio.WithStdio, cio.WithTerminal)
-	}
 	return cio.NullIO
 }
 
@@ -174,6 +171,130 @@ func TestContainerStart(t *testing.T) {
 	}
 }
 
+func readShimPath(taskID string) (string, error) {
+	runtime := plugins.RuntimePluginV2.String() + ".task"
+	shimBinaryNamePath := filepath.Join(defaultState, runtime, testNamespace, taskID, "shim-binary-path")
+
+	shimPath, err := os.ReadFile(shimBinaryNamePath)
+	if err != nil {
+		return "", err
+	}
+	return string(shimPath), nil
+}
+
+func copyShim(shimPath string) (string, error) {
+	tempPath := filepath.Join(os.TempDir(), filepath.Base(shimPath))
+	if err := fs.CopyFile(tempPath, shimPath); err != nil {
+		return "", err
+	}
+
+	fi, err := os.Stat(shimPath)
+	if err != nil {
+		return "", err
+	}
+	if err := os.Chmod(tempPath, fi.Mode().Perm()); err != nil {
+		return "", err
+	}
+
+	return tempPath, nil
+}
+
+func TestContainerStartWithAbsRuntimePath(t *testing.T) {
+	t.Parallel()
+
+	client, err := newClient(t, address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	var (
+		image       Image
+		ctx, cancel = testContext(t)
+		id          = t.Name()
+	)
+	defer cancel()
+
+	image, err = client.GetImage(ctx, testImage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	container, err := client.NewContainer(ctx, id, WithNewSnapshot(id, image), WithNewSpec(oci.WithImageConfig(image), withExitStatus(7)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer container.Delete(ctx, WithSnapshotCleanup)
+
+	// create a temp task to read the default shim path
+	task, err := container.NewTask(ctx, empty())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defaultShimPath, err := readShimPath(task.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// remove the temp task
+	if _, err := task.Delete(ctx, WithProcessKill); err != nil {
+		t.Fatal(err)
+	}
+
+	tempShimPath, err := copyShim(defaultShimPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tempShimPath)
+
+	task, err = container.NewTask(ctx, empty(), WithRuntimePath(tempShimPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	shimPath, err := readShimPath(task.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shimPath != tempShimPath {
+		t.Fatalf("The task's shim path is %s, does not used the specified runtime path: %s", shimPath, tempShimPath)
+	}
+
+	statusC, err := task.Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if runtime.GOOS != "windows" {
+		// task.Pid not implemented on Windows
+		if pid := task.Pid(); pid < 1 {
+			t.Errorf("invalid task pid %d", pid)
+		}
+	}
+
+	if err := task.Start(ctx); err != nil {
+		t.Error(err)
+		task.Delete(ctx)
+		return
+	}
+	status := <-statusC
+	code, _, err := status.Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 7 {
+		t.Errorf("expected status 7 from wait but received %d", code)
+	}
+
+	deleteStatus, err := task.Delete(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ec := deleteStatus.ExitCode(); ec != 7 {
+		t.Errorf("expected status 7 from delete but received %d", ec)
+	}
+}
+
 func TestContainerOutput(t *testing.T) {
 	t.Parallel()
 
@@ -202,7 +323,7 @@ func TestContainerOutput(t *testing.T) {
 	defer container.Delete(ctx, WithSnapshotCleanup)
 
 	stdout := bytes.NewBuffer(nil)
-	task, err := container.NewTask(ctx, cio.NewCreator(withByteBuffers(stdout)))
+	task, err := container.NewTask(ctx, cio.NewCreator(withStdout(stdout)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,12 +355,11 @@ func TestContainerOutput(t *testing.T) {
 	}
 }
 
-func withByteBuffers(stdout io.Writer) cio.Opt {
-	// TODO: could this use io.Discard?
+func withStdout(stdout io.Writer) cio.Opt {
 	return func(streams *cio.Streams) {
-		streams.Stdin = new(bytes.Buffer)
+		streams.Stdin = bytes.NewReader(nil)
 		streams.Stdout = stdout
-		streams.Stderr = new(bytes.Buffer)
+		streams.Stderr = io.Discard
 	}
 }
 
@@ -450,29 +570,44 @@ func TestContainerPids(t *testing.T) {
 	if taskPid < 1 {
 		t.Errorf("invalid task pid %d", taskPid)
 	}
+
 	processes, err := task.Pids(ctx)
-	switch runtime.GOOS {
-	case "windows":
-		// TODO: This is currently not implemented on windows
-	default:
-		if err != nil {
-			t.Fatal(err)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l := len(processes)
+	// The point of this test is to see that we successfully can get all of
+	// the pids running in the container and they match the number expected,
+	// but for Windows this concept is a bit different. Windows containers
+	// essentially go through the usermode boot phase of the operating system,
+	// and have quite a few processes and system services running outside of
+	// the "init" process you specify. Because of this, there's not a great
+	// way to say "there should only be N processes running" like we can ensure
+	// for Linux based off the process we asked to run.
+	//
+	// With all that said, on Windows lets check that we're greater than one
+	// ("init" + system services/procs)
+	if runtime.GOOS == "windows" {
+		if l <= 1 {
+			t.Errorf("expected more than one process but received %d", l)
 		}
+	} else {
 		// 2 processes, 1 for sh and one for sleep
-		if l := len(processes); l != 2 {
+		if l != 2 {
 			t.Errorf("expected 2 process but received %d", l)
 		}
+	}
 
-		var found bool
-		for _, p := range processes {
-			if p.Pid == taskPid {
-				found = true
-				break
-			}
+	var found bool
+	for _, p := range processes {
+		if p.Pid == taskPid {
+			found = true
+			break
 		}
-		if !found {
-			t.Errorf("pid %d must be in %+v", taskPid, processes)
-		}
+	}
+	if !found {
+		t.Errorf("pid %d must be in %+v", taskPid, processes)
 	}
 	if err := task.Kill(ctx, syscall.SIGKILL); err != nil {
 		select {
@@ -669,10 +804,6 @@ func TestKillContainerDeletedByRunc(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-
-	if client.Runtime() == plugin.RuntimeLinuxV1 {
-		t.Skip("test relies on runtime v2")
-	}
 
 	var (
 		image       Image
@@ -1142,7 +1273,7 @@ func TestContainerHostname(t *testing.T) {
 	defer container.Delete(ctx, WithSnapshotCleanup)
 
 	stdout := bytes.NewBuffer(nil)
-	task, err := container.NewTask(ctx, cio.NewCreator(withByteBuffers(stdout)))
+	task, err := container.NewTask(ctx, cio.NewCreator(withStdout(stdout)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1747,7 +1878,7 @@ func TestContainerExecLargeOutputWithTTY(t *testing.T) {
 		stdout := bytes.NewBuffer(nil)
 
 		execID := t.Name() + "_exec"
-		process, err := task.Exec(ctx, execID, processSpec, cio.NewCreator(withByteBuffers(stdout), withProcessTTY()))
+		process, err := task.Exec(ctx, execID, processSpec, cio.NewCreator(withStdout(stdout), withProcessTTY()))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2156,8 +2287,7 @@ func initContainerAndCheckChildrenDieOnKill(t *testing.T, opts ...oci.SpecOpts) 
 	}
 	defer container.Delete(ctx, WithSnapshotCleanup)
 
-	stdout := bytes.NewBuffer(nil)
-	task, err := container.NewTask(ctx, cio.NewCreator(withByteBuffers(stdout)))
+	task, err := container.NewTask(ctx, cio.NullIO)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2501,7 +2631,7 @@ func TestContainerUsername(t *testing.T) {
 	defer container.Delete(ctx, WithSnapshotCleanup)
 
 	buf := bytes.NewBuffer(nil)
-	task, err := container.NewTask(ctx, cio.NewCreator(withByteBuffers(buf)))
+	task, err := container.NewTask(ctx, cio.NewCreator(withStdout(buf)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2553,7 +2683,7 @@ func TestContainerPTY(t *testing.T) {
 	defer container.Delete(ctx, WithSnapshotCleanup)
 
 	buf := bytes.NewBuffer(nil)
-	task, err := container.NewTask(ctx, cio.NewCreator(withByteBuffers(buf), withProcessTTY()))
+	task, err := container.NewTask(ctx, cio.NewCreator(withStdout(buf), withProcessTTY()))
 	if err != nil {
 		t.Fatal(err)
 	}

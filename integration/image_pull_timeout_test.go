@@ -33,17 +33,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/leases"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/log/logtest"
-	"github.com/containerd/containerd/namespaces"
-	criconfig "github.com/containerd/containerd/pkg/cri/config"
-	criserver "github.com/containerd/containerd/pkg/cri/server"
+	"github.com/containerd/log"
+	"github.com/containerd/log/logtest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/assert"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/leases"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/containerd/v2/oci"
+	criconfig "github.com/containerd/containerd/v2/pkg/cri/config"
+	criserver "github.com/containerd/containerd/v2/pkg/cri/server"
+	"github.com/containerd/containerd/v2/pkg/cri/server/base"
+	"github.com/containerd/containerd/v2/pkg/cri/server/images"
 )
 
 var (
@@ -61,6 +65,41 @@ func TestCRIImagePullTimeout(t *testing.T) {
 
 	t.Run("HoldingContentOpenWriter", testCRIImagePullTimeoutByHoldingContentOpenWriter)
 	t.Run("NoDataTransferred", testCRIImagePullTimeoutByNoDataTransferred)
+	t.Run("SlowCommitWriter", testCRIImagePullTimeoutBySlowCommitWriter)
+}
+
+// testCRIImagePullTimeoutBySlowCommitWriter tests that
+//
+//	It should not cancel if the content.Commit takes long time.
+//
+// After copying all the data from registry, the request should be inactive
+// before content.Commit. If the blob is large, for instance, 2 GiB, the fsync
+// during content.Commit maybe take long time during IO pressure. The
+// content.Commit holds the bolt's writable mutex and blocks other goroutines
+// which are going to commit blob as well. If the progress tracker still
+// considers these requests active, it maybe file false alert and cancel the
+// ImagePull.
+//
+// It's reproducer for #9347.
+func testCRIImagePullTimeoutBySlowCommitWriter(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+
+	delayDuration := 2 * defaultImagePullProgressTimeout
+	cli := buildLocalContainerdClient(t, tmpDir, tweakContentInitFnWithDelayer(delayDuration))
+
+	criService, err := initLocalCRIPlugin(cli, tmpDir, criconfig.Registry{})
+	assert.NoError(t, err)
+
+	ctx := namespaces.WithNamespace(logtest.WithT(context.Background(), t), k8sNamespace)
+
+	_, err = criService.PullImage(ctx, &runtimeapi.PullImageRequest{
+		Image: &runtimeapi.ImageSpec{
+			Image: pullProgressTestImageName,
+		},
+	})
+	assert.NoError(t, err)
 }
 
 // testCRIImagePullTimeoutByHoldingContentOpenWriter tests that
@@ -75,7 +114,7 @@ func testCRIImagePullTimeoutByHoldingContentOpenWriter(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	cli := buildLocalContainerdClient(t, tmpDir)
+	cli := buildLocalContainerdClient(t, tmpDir, nil)
 
 	criService, err := initLocalCRIPlugin(cli, tmpDir, criconfig.Registry{})
 	assert.NoError(t, err)
@@ -91,8 +130,8 @@ func testCRIImagePullTimeoutByHoldingContentOpenWriter(t *testing.T) {
 		"manifests": [
 			{
 				"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
-				"size": 736,
-				"digest": "sha256:0d92c9993db0a3a2c38e5ffe31b150ea114922fca5dacbbe5ffbe75f64d6d674",
+				"size": 698,
+				"digest": "sha256:a73de573ba1830a0eb28a2b3976eb9ef270a8647d360fa70f15adc2c85f22ed3",
 				"platform": {
 					"architecture": "amd64",
 					"os": "linux"
@@ -100,8 +139,8 @@ func testCRIImagePullTimeoutByHoldingContentOpenWriter(t *testing.T) {
 			},
 			{
 				"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
-				"size": 736,
-				"digest": "sha256:b9abb629fc01b6ce674b7bc4898dbb4d4a3f0766f4ccb13101e95fa44f9d9fad",
+				"size": 698,
+				"digest": "sha256:eb1fee73c590298329d379eb676565c443c34bc460a596c575aaaffed821690f",
 				"platform": {
 					"architecture": "arm64",
 					"os": "linux"
@@ -109,8 +148,8 @@ func testCRIImagePullTimeoutByHoldingContentOpenWriter(t *testing.T) {
 			},
 			{
 				"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
-				"size": 736,
-				"digest": "sha256:ad3b2f13d23c6eb36310a2e5e9efede9fe815b3f13216049a41772168b6c6c31",
+				"size": 698,
+				"digest": "sha256:4ebd079e21fae2c2dfae912c69b60d609d81fceb727168a3e8b441879aa65307",
 				"platform": {
 					"architecture": "ppc64le",
 					"os": "linux"
@@ -119,31 +158,31 @@ func testCRIImagePullTimeoutByHoldingContentOpenWriter(t *testing.T) {
 			{
 				"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
 				"size": 2796,
-				"digest": "sha256:0b329ba6f677012bbb17d381159661fb25accae42baf870c1e0dae9c40591c6c",
+				"digest": "sha256:1a9be70b621230dbc2731ff205ca378cfce011dd96bccb79b721c88e78c0d8de",
 				"platform": {
 					"architecture": "amd64",
 					"os": "windows",
-					"os.version": "10.0.17763.2452"
+					"os.version": "10.0.17763.4377"
 				}
 			},
 			{
 				"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
 				"size": 2796,
-				"digest": "sha256:a246e419ad39e242deef88ceed67c400b2a3a217c5148a4a7054c5e5ac13d2af",
+				"digest": "sha256:34b5e440fe34fcb463f339db595937737363a694d470c220c407015b610c165a",
 				"platform": {
 					"architecture": "amd64",
 					"os": "windows",
-					"os.version": "10.0.19042.1466"
+					"os.version": "10.0.19042.1889"
 				}
 			},
 			{
 				"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
-				"size": 2797,
-				"digest": "sha256:7030c34dabb80a73f86a0fcccfa6c0b423bfea77f60f813749497df2d46b5eff",
+				"size": 2796,
+				"digest": "sha256:226db2ad1c68b6082a2cfd97fd6c0b87c7f0e3171b4fe2c22537f679285e6a20",
 				"platform": {
 					"architecture": "amd64",
 					"os": "windows",
-					"os.version": "10.0.20348.469"
+					"os.version": "10.0.20348.1726"
 				}
 			}
 		]
@@ -213,7 +252,7 @@ func testCRIImagePullTimeoutByNoDataTransferred(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	cli := buildLocalContainerdClient(t, tmpDir)
+	cli := buildLocalContainerdClient(t, tmpDir, nil)
 
 	mirrorSrv := newMirrorRegistryServer(mirrorRegistryServerConfig{
 		limitedBytesPerConn: 1024 * 1024 * 3, // 3MB
@@ -257,13 +296,6 @@ func testCRIImagePullTimeoutByNoDataTransferred(t *testing.T) {
 					Endpoints: []string{mirrorURL.String()},
 				},
 			},
-			Configs: map[string]criconfig.RegistryConfig{
-				mirrorURL.Host: {
-					TLS: &criconfig.TLSConfig{
-						InsecureSkipVerify: true,
-					},
-				},
-			},
 		},
 	} {
 		criService, err := initLocalCRIPlugin(cli, tmpDir, registryCfg)
@@ -278,12 +310,12 @@ func testCRIImagePullTimeoutByNoDataTransferred(t *testing.T) {
 			},
 		})
 
-		assert.Equal(t, errors.Unwrap(err), context.Canceled, "[%v] expected canceled error, but got (%v)", idx, err)
-		assert.Equal(t, mirrorSrv.limiter.clearHitCircuitBreaker(), true, "[%v] expected to hit circuit breaker", idx)
+		assert.Equal(t, context.Canceled, errors.Unwrap(err), "[%v] expected canceled error, but got (%v)", idx, err)
+		assert.True(t, mirrorSrv.limiter.clearHitCircuitBreaker(), "[%v] expected to hit circuit breaker", idx)
 
 		// cleanup the temp data by sync delete
 		lid, ok := leases.FromContext(dctx)
-		assert.Equal(t, ok, true)
+		assert.True(t, ok)
 		err = cli.LeasesService().Delete(ctx, leases.Lease{ID: lid}, leases.SynchronousDelete)
 		assert.NoError(t, err)
 	}
@@ -466,10 +498,22 @@ func initLocalCRIPlugin(client *containerd.Client, tmpDir string, registryCfg cr
 			},
 			Registry:                 registryCfg,
 			ImagePullProgressTimeout: defaultImagePullProgressTimeout.String(),
+			StatsCollectPeriod:       10,
 		},
 		ContainerdRootDir: containerdRootDir,
 		RootDir:           filepath.Join(criWorkDir, "root"),
 		StateDir:          filepath.Join(criWorkDir, "state"),
 	}
-	return criserver.NewCRIService(cfg, client, nil)
+
+	criBase := &base.CRIBase{
+		Config:       cfg,
+		BaseOCISpecs: map[string]*oci.Spec{},
+	}
+
+	imageService, err := images.NewService(cfg, client)
+	if err != nil {
+		panic(err)
+	}
+
+	return criserver.NewCRIService(criBase, imageService, client, nil)
 }

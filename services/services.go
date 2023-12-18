@@ -21,6 +21,8 @@ const (
 	ContentService = "content-service"
 	// SnapshotsService is id of snapshots service.
 	SnapshotsService = "snapshots-service"
+	// SandboxControllersService is id of snapshots service.
+	SandboxControllersService = "sandboxes-service"
 	// ImagesService is id of images service.
 	ImagesService = "images-service"
 	// ContainersService is id of containers service.
@@ -33,10 +35,6 @@ const (
 	DiffService = "diff-service"
 	// IntrospectionService is the id of introspection service
 	IntrospectionService = "introspection-service"
-	// SandboxStoreService is the id of Sandbox's store service
-	SandboxStoreService = "sandbox-store-service"
-	// SandboxControllerService is the id of Sandbox's controller service
-	SandboxControllerService = "sandbox-controller-service"
-	// Streaming service is the id of the streaming service
+	// StreamingService is the id of the streaming service
 	StreamingService = "streaming-service"
 )

@@ -19,26 +19,26 @@ package tasks
 import (
 	gocontext "context"
 
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/cio"
-	"github.com/containerd/containerd/cmd/ctr/commands"
-	"github.com/containerd/containerd/log"
+	"github.com/containerd/containerd/v2/cio"
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/cmd/ctr/commands"
+	"github.com/containerd/log"
 	"github.com/urfave/cli"
 )
 
 var deleteCommand = cli.Command{
 	Name:      "delete",
-	Usage:     "delete one or more tasks",
+	Usage:     "Delete one or more tasks",
 	ArgsUsage: "CONTAINER [CONTAINER, ...]",
 	Aliases:   []string{"del", "remove", "rm"},
 	Flags: []cli.Flag{
 		cli.BoolFlag{
 			Name:  "force, f",
-			Usage: "force delete task process",
+			Usage: "Force delete task process",
 		},
 		cli.StringFlag{
 			Name:  "exec-id",
-			Usage: "process ID to kill",
+			Usage: "Process ID to kill",
 		},
 	},
 	Action: func(context *cli.Context) error {

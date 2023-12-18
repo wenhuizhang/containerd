@@ -21,23 +21,25 @@ import (
 
 	"google.golang.org/grpc"
 
-	api "github.com/containerd/containerd/api/services/sandbox/v1"
-	"github.com/containerd/containerd/api/types"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/sandbox"
+	api "github.com/containerd/containerd/v2/api/services/sandbox/v1"
+	"github.com/containerd/containerd/v2/api/types"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/containerd/v2/sandbox"
+	"github.com/containerd/log"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 )
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.GRPCPlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.GRPCPlugin,
 		ID:   "sandboxes",
 		Requires: []plugin.Type{
-			plugin.SandboxStorePlugin,
+			plugins.SandboxStorePlugin,
 		},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			sp, err := ic.GetByID(plugin.SandboxStorePlugin, "local")
+			sp, err := ic.GetByID(plugins.SandboxStorePlugin, "local")
 			if err != nil {
 				return nil, err
 			}

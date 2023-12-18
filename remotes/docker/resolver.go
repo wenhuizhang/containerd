@@ -18,6 +18,7 @@ package docker
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -27,18 +28,17 @@ import (
 	"path"
 	"strings"
 
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/reference"
-	"github.com/containerd/containerd/remotes"
-	"github.com/containerd/containerd/remotes/docker/schema1" //nolint:staticcheck // Ignore SA1019. Need to keep deprecated package for compatibility.
-	remoteerrors "github.com/containerd/containerd/remotes/errors"
-	"github.com/containerd/containerd/tracing"
-	"github.com/containerd/containerd/version"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/reference"
+	"github.com/containerd/containerd/v2/remotes"
+	"github.com/containerd/containerd/v2/remotes/docker/schema1" //nolint:staticcheck // Ignore SA1019. Need to keep deprecated package for compatibility.
+	remoteerrors "github.com/containerd/containerd/v2/remotes/errors"
+	"github.com/containerd/containerd/v2/tracing"
+	"github.com/containerd/containerd/v2/version"
+	"github.com/containerd/log"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -99,25 +99,30 @@ type ResolverOptions struct {
 	Tracker StatusTracker
 
 	// Authorizer is used to authorize registry requests
-	// Deprecated: use Hosts
+	//
+	// Deprecated: use Hosts.
 	Authorizer Authorizer
 
 	// Credentials provides username and secret given a host.
 	// If username is empty but a secret is given, that secret
 	// is interpreted as a long lived token.
-	// Deprecated: use Hosts
+	//
+	// Deprecated: use Hosts.
 	Credentials func(string) (string, string, error)
 
 	// Host provides the hostname given a namespace.
-	// Deprecated: use Hosts
+	//
+	// Deprecated: use Hosts.
 	Host func(string) (string, error)
 
 	// PlainHTTP specifies to use plain http and not https
-	// Deprecated: use Hosts
+	//
+	// Deprecated: use Hosts.
 	PlainHTTP bool
 
 	// Client is the http client to used when making registry requests
-	// Deprecated: use Hosts
+	//
+	// Deprecated: use Hosts.
 	Client *http.Client
 }
 
@@ -144,6 +149,9 @@ func NewResolver(options ResolverOptions) remotes.Resolver {
 
 	if options.Headers == nil {
 		options.Headers = make(http.Header)
+	} else {
+		// make a copy of the headers to avoid race due to concurrent map write
+		options.Headers = options.Headers.Clone()
 	}
 	if _, ok := options.Headers["User-Agent"]; !ok {
 		options.Headers.Set("User-Agent", "containerd/"+version.Version)
@@ -234,10 +242,9 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 	}
 
 	var (
-		firstErr error
-		paths    [][]string
-		dgst     = refspec.Digest()
-		caps     = HostCapabilityPull
+		paths [][]string
+		dgst  = refspec.Digest()
+		caps  = HostCapabilityPull
 	)
 
 	if dgst != "" {
@@ -268,6 +275,13 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 		return "", ocispec.Descriptor{}, err
 	}
 
+	var (
+		// firstErr is the most relevant error encountered during resolution.
+		// We use this to determine the error to return, making sure that the
+		// error created furthest through the resolution process is returned.
+		firstErr         error
+		firstErrPriority int
+	)
 	for _, u := range paths {
 		for _, host := range hosts {
 			ctx := log.WithLogger(ctx, log.G(ctx).WithField("host", host.Host))
@@ -287,9 +301,9 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 				if errors.Is(err, ErrInvalidAuthorization) {
 					err = fmt.Errorf("pull access denied, repository does not exist or may require authorization: %w", err)
 				}
-				// Store the error for referencing later
-				if firstErr == nil {
+				if firstErrPriority < 1 {
 					firstErr = err
+					firstErrPriority = 1
 				}
 				log.G(ctx).WithError(err).Info("trying next host")
 				continue // try another host
@@ -298,14 +312,19 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 
 			if resp.StatusCode > 299 {
 				if resp.StatusCode == http.StatusNotFound {
+					if firstErrPriority < 2 {
+						firstErr = fmt.Errorf("%s: %w", ref, errdefs.ErrNotFound)
+						firstErrPriority = 2
+					}
 					log.G(ctx).Info("trying next host - response was http.StatusNotFound")
 					continue
 				}
 				if resp.StatusCode > 399 {
-					// Set firstErr when encountering the first non-404 status code.
-					if firstErr == nil {
+					if firstErrPriority < 3 {
 						firstErr = remoteerrors.NewUnexpectedStatusErr(resp)
+						firstErrPriority = 3
 					}
+					log.G(ctx).Infof("trying next host - response was %s", resp.Status)
 					continue // try another host
 				}
 				return "", ocispec.Descriptor{}, remoteerrors.NewUnexpectedStatusErr(resp)
@@ -376,8 +395,9 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 			}
 			// Prevent resolving to excessively large manifests
 			if size > MaxManifestSize {
-				if firstErr == nil {
+				if firstErrPriority < 4 {
 					firstErr = fmt.Errorf("rejecting %d byte manifest for %s: %w", size, ref, errdefs.ErrNotFound)
+					firstErrPriority = 4
 				}
 				continue
 			}
@@ -393,10 +413,8 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 		}
 	}
 
-	// If above loop terminates without return, then there was an error.
-	// "firstErr" contains the first non-404 error. That is, "firstErr == nil"
-	// means that either no registries were given or each registry returned 404.
-
+	// If above loop terminates without return or error, then no registries
+	// were provided.
 	if firstErr == nil {
 		firstErr = fmt.Errorf("%s: %w", ref, errdefs.ErrNotFound)
 	}
@@ -539,9 +557,10 @@ func (r *request) do(ctx context.Context) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header = http.Header{} // headers need to be copied to avoid concurrent map access
-	for k, v := range r.header {
-		req.Header[k] = v
+	if r.header == nil {
+		req.Header = http.Header{}
+	} else {
+		req.Header = r.header.Clone() // headers need to be copied to avoid concurrent map access
 	}
 	if r.body != nil {
 		body, err := r.body()
@@ -576,18 +595,13 @@ func (r *request) do(ctx context.Context) (*http.Response, error) {
 			return nil
 		}
 	}
-	_, httpSpan := tracing.StartSpan(
-		ctx,
-		tracing.Name("remotes.docker.resolver", "HTTPRequest"),
-		tracing.WithHTTPRequest(req),
-	)
-	defer httpSpan.End()
+
+	tracing.UpdateHTTPClient(client, tracing.Name("remotes.docker.resolver", "HTTPRequest"))
+
 	resp, err := client.Do(req)
 	if err != nil {
-		httpSpan.SetStatus(err)
 		return nil, fmt.Errorf("failed to do request: %w", err)
 	}
-	httpSpan.SetAttributes(tracing.HTTPStatusCodeAttributes(resp.StatusCode)...)
 	log.G(ctx).WithFields(responseFields(resp)).Debug("fetch response received")
 	return resp, nil
 }
@@ -647,7 +661,7 @@ func (r *request) String() string {
 	return r.host.Scheme + "://" + r.host.Host + r.path
 }
 
-func requestFields(req *http.Request) logrus.Fields {
+func requestFields(req *http.Request) log.Fields {
 	fields := map[string]interface{}{
 		"request.method": req.Method,
 	}
@@ -665,10 +679,10 @@ func requestFields(req *http.Request) logrus.Fields {
 		}
 	}
 
-	return logrus.Fields(fields)
+	return fields
 }
 
-func responseFields(resp *http.Response) logrus.Fields {
+func responseFields(resp *http.Response) log.Fields {
 	fields := map[string]interface{}{
 		"response.status": resp.Status,
 	}
@@ -683,7 +697,7 @@ func responseFields(resp *http.Response) logrus.Fields {
 		}
 	}
 
-	return logrus.Fields(fields)
+	return fields
 }
 
 // IsLocalhost checks if the registry host is local.
@@ -698,4 +712,28 @@ func IsLocalhost(host string) bool {
 
 	ip := net.ParseIP(host)
 	return ip.IsLoopback()
+}
+
+// HTTPFallback is an http.RoundTripper which allows fallback from https to http
+// for registry endpoints with configurations for both http and TLS, such as
+// defaulted localhost endpoints.
+type HTTPFallback struct {
+	http.RoundTripper
+}
+
+func (f HTTPFallback) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := f.RoundTripper.RoundTrip(r)
+	var tlsErr tls.RecordHeaderError
+	if errors.As(err, &tlsErr) && string(tlsErr.RecordHeader[:]) == "HTTP/" {
+		// server gave HTTP response to HTTPS client
+		plainHTTPUrl := *r.URL
+		plainHTTPUrl.Scheme = "http"
+
+		plainHTTPRequest := *r
+		plainHTTPRequest.URL = &plainHTTPUrl
+
+		return f.RoundTripper.RoundTrip(&plainHTTPRequest)
+	}
+
+	return resp, err
 }

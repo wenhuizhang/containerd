@@ -21,8 +21,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/containerd/containerd/mount"
-	"github.com/containerd/typeurl"
+	"github.com/containerd/containerd/v2/mount"
+	"github.com/containerd/typeurl/v2"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -67,6 +67,8 @@ type Comparer interface {
 type ApplyConfig struct {
 	// ProcessorPayloads specifies the payload sent to various processors
 	ProcessorPayloads map[string]typeurl.Any
+	// SyncFs is to synchronize the underlying filesystem containing files
+	SyncFs bool
 }
 
 // ApplyOpt is used to configure an Apply operation
@@ -125,8 +127,19 @@ func WithPayloads(payloads map[string]typeurl.Any) ApplyOpt {
 	}
 }
 
-// WithSourceDateEpoch specifies the timestamp used for whiteouts to provide control for reproducibility.
+// WithSyncFs sets sync flag to the config.
+func WithSyncFs(sync bool) ApplyOpt {
+	return func(_ context.Context, _ ocispec.Descriptor, c *ApplyConfig) error {
+		c.SyncFs = sync
+		return nil
+	}
+}
+
+// WithSourceDateEpoch specifies the timestamp used to provide control for reproducibility.
 // See also https://reproducible-builds.org/docs/source-date-epoch/ .
+//
+// Since containerd v2.0, the whiteout timestamps are set to zero (1970-01-01),
+// not to the source date epoch.
 func WithSourceDateEpoch(tm *time.Time) Opt {
 	return func(c *Config) error {
 		c.SourceDateEpoch = tm

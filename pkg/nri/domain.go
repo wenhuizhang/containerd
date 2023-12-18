@@ -21,23 +21,22 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/namespaces"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/log"
 	nri "github.com/containerd/nri/pkg/adaptation"
-	"github.com/sirupsen/logrus"
 )
 
 // Domain implements the functions the generic NRI interface needs to
 // deal with pods and containers from a particular containerd namespace.
 type Domain interface {
-	// GetName() returns the containerd namespace for this domain.
+	// GetName returns the containerd namespace for this domain.
 	GetName() string
 
-	// ListPodSandboxes list all pods in this namespace.
+	// ListPodSandboxes lists all pods in this namespace.
 	ListPodSandboxes() []PodSandbox
 
-	// ListContainer list all containers in this namespace.
+	// ListContainers lists all containers in this namespace.
 	ListContainers() []Container
 
 	// GetPodSandbox returns the pod for the given ID.
@@ -57,10 +56,10 @@ type Domain interface {
 func RegisterDomain(d Domain) {
 	err := domains.add(d)
 	if err != nil {
-		logrus.WithError(err).Fatalf("Failed to register namespace %q with NRI", d.GetName())
+		log.L.WithError(err).Fatalf("Failed to register namespace %q with NRI", d.GetName())
 	}
 
-	logrus.Infof("Registered namespace %q with NRI", d.GetName())
+	log.L.Infof("Registered namespace %q with NRI", d.GetName())
 }
 
 type domainTable struct {

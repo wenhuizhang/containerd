@@ -17,29 +17,29 @@
 package install
 
 import (
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/cmd/ctr/commands"
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/cmd/ctr/commands"
 	"github.com/urfave/cli"
 )
 
 // Command to install binary packages
 var Command = cli.Command{
 	Name:        "install",
-	Usage:       "install a new package",
+	Usage:       "Install a new package",
 	ArgsUsage:   "<ref>",
 	Description: "install a new package",
 	Flags: []cli.Flag{
 		cli.BoolFlag{
 			Name:  "libs,l",
-			Usage: "install libs from the image",
+			Usage: "Install libs from the image",
 		},
 		cli.BoolFlag{
 			Name:  "replace,r",
-			Usage: "replace any binaries or libs in the opt directory",
+			Usage: "Replace any binaries or libs in the opt directory",
 		},
 		cli.StringFlag{
 			Name:  "path",
-			Usage: "set an optional install path other than the managed opt directory",
+			Usage: "Set an optional install path other than the managed opt directory",
 		},
 	},
 	Action: func(context *cli.Context) error {

@@ -19,19 +19,14 @@
 package config
 
 import (
-	"time"
-
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/pkg/cri/streaming"
-	"github.com/pelletier/go-toml"
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/pelletier/go-toml/v2"
+	"k8s.io/kubelet/pkg/cri/streaming"
 )
 
 // DefaultConfig returns default configurations of cri plugin.
 func DefaultConfig() PluginConfig {
 	defaultRuncV2Opts := `
-	# NoPivotRoot disables pivot root when creating a container.
-	NoPivotRoot = false
-
 	# NoNewKeyring disables new keyring for the container.
 	NoNewKeyring = false
 
@@ -50,19 +45,15 @@ func DefaultConfig() PluginConfig {
 	# Root is the runc root directory.
 	Root = ""
 
-	# CriuPath is the criu binary path.
-	CriuPath = ""
-
-	# SystemdCgroup enables systemd cgroups.
-	SystemdCgroup = false
-
 	# CriuImagePath is the criu image path
 	CriuImagePath = ""
 
 	# CriuWorkPath is the criu work path.
 	CriuWorkPath = ""
 `
-	tree, _ := toml.Load(defaultRuncV2Opts)
+	var m map[string]interface{}
+	toml.Unmarshal([]byte(defaultRuncV2Opts), &m)
+
 	return PluginConfig{
 		CniConfig: CniConfig{
 			NetworkPluginBinDir:        "/opt/cni/bin",
@@ -74,12 +65,11 @@ func DefaultConfig() PluginConfig {
 		ContainerdConfig: ContainerdConfig{
 			Snapshotter:        containerd.DefaultSnapshotter,
 			DefaultRuntimeName: "runc",
-			NoPivot:            false,
 			Runtimes: map[string]Runtime{
 				"runc": {
-					Type:        "io.containerd.runc.v2",
-					Options:     tree.ToMap(),
-					SandboxMode: string(ModePodSandbox),
+					Type:      "io.containerd.runc.v2",
+					Options:   m,
+					Sandboxer: string(ModePodSandbox),
 				},
 			},
 			DisableSnapshotAnnotations: true,
@@ -95,9 +85,8 @@ func DefaultConfig() PluginConfig {
 			TLSKeyFile:  "",
 			TLSCertFile: "",
 		},
-		SandboxImage:                     "registry.k8s.io/pause:3.8",
+		SandboxImage:                     "registry.k8s.io/pause:3.9",
 		StatsCollectPeriod:               10,
-		SystemdCgroup:                    false,
 		MaxContainerLogLineSize:          16 * 1024,
 		MaxConcurrentDownloads:           3,
 		DisableProcMount:                 false,
@@ -109,6 +98,10 @@ func DefaultConfig() PluginConfig {
 		},
 		EnableCDI:                false,
 		CDISpecDirs:              []string{"/etc/cdi", "/var/run/cdi"},
-		ImagePullProgressTimeout: time.Minute.String(),
+		ImagePullProgressTimeout: defaultImagePullProgressTimeoutDuration.String(),
+		DrainExecSyncIOTimeout:   "0s",
+		ImagePullWithSyncFs:      false,
+		EnableUnprivilegedPorts:  true,
+		EnableUnprivilegedICMP:   true,
 	}
 }

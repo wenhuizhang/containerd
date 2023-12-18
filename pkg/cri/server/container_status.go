@@ -21,8 +21,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/containerd/containerd/errdefs"
-	containerstore "github.com/containerd/containerd/pkg/cri/store/container"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/pkg/cri/server/images"
+	containerstore "github.com/containerd/containerd/v2/pkg/cri/store/container"
 
 	runtimespec "github.com/opencontainers/runtime-spec/specs-go"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
@@ -42,13 +43,13 @@ func (c *criService) ContainerStatus(ctx context.Context, r *runtime.ContainerSt
 	// * ImageRef in container status is repo digest.
 	spec := container.Config.GetImage()
 	imageRef := container.ImageRef
-	image, err := c.imageStore.Get(imageRef)
+	image, err := c.GetImage(imageRef)
 	if err != nil {
 		if !errdefs.IsNotFound(err) {
 			return nil, fmt.Errorf("failed to get image %q: %w", imageRef, err)
 		}
 	} else {
-		repoTags, repoDigests := parseImageReferences(image.References)
+		repoTags, repoDigests := images.ParseImageReferences(image.References)
 		if len(repoTags) > 0 {
 			// Based on current behavior of dockershim, this field should be
 			// image tag.
@@ -60,7 +61,6 @@ func (c *criService) ContainerStatus(ctx context.Context, r *runtime.ContainerSt
 		}
 	}
 	status := toCRIContainerStatus(container, spec, imageRef)
-
 	if status.GetCreatedAt() == 0 {
 		// CRI doesn't allow CreatedAt == 0.
 		info, err := container.Container.Info(ctx)

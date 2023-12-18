@@ -17,7 +17,9 @@
 package healthcheck
 
 import (
-	"github.com/containerd/containerd/plugin"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -29,8 +31,8 @@ type service struct {
 }
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.GRPCPlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.GRPCPlugin,
 		ID:   "healthcheck",
 		InitFn: func(*plugin.InitContext) (interface{}, error) {
 			return newService()

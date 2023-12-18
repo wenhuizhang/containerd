@@ -20,15 +20,16 @@ import (
 	"context"
 	"fmt"
 
-	diffapi "github.com/containerd/containerd/api/services/diff/v1"
-	"github.com/containerd/containerd/api/types"
-	"github.com/containerd/containerd/diff"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/mount"
-	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/services"
-	"github.com/containerd/typeurl"
-	"github.com/opencontainers/go-digest"
+	diffapi "github.com/containerd/containerd/v2/api/services/diff/v1"
+	"github.com/containerd/containerd/v2/diff"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/mount"
+	"github.com/containerd/containerd/v2/oci"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/containerd/v2/services"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
+	"github.com/containerd/typeurl/v2"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"google.golang.org/grpc"
 )
@@ -49,15 +50,15 @@ type differ interface {
 }
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.ServicePlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.ServicePlugin,
 		ID:   services.DiffService,
 		Requires: []plugin.Type{
-			plugin.DiffPlugin,
+			plugins.DiffPlugin,
 		},
 		Config: defaultDifferConfig,
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			differs, err := ic.GetByType(plugin.DiffPlugin)
+			differs, err := ic.GetByType(plugins.DiffPlugin)
 			if err != nil {
 				return nil, err
 			}
@@ -65,13 +66,9 @@ func init() {
 			orderedNames := ic.Config.(*config).Order
 			ordered := make([]differ, len(orderedNames))
 			for i, n := range orderedNames {
-				differp, ok := differs[n]
+				d, ok := differs[n]
 				if !ok {
 					return nil, fmt.Errorf("needed differ not loaded: %s", n)
-				}
-				d, err := differp.Instance()
-				if err != nil {
-					return nil, fmt.Errorf("could not load required differ due plugin init error: %s: %w", n, err)
 				}
 
 				ordered[i], ok = d.(differ)
@@ -97,8 +94,8 @@ func (l *local) Apply(ctx context.Context, er *diffapi.ApplyRequest, _ ...grpc.C
 	var (
 		ocidesc ocispec.Descriptor
 		err     error
-		desc    = toDescriptor(er.Diff)
-		mounts  = toMounts(er.Mounts)
+		desc    = oci.DescriptorFromProto(er.Diff)
+		mounts  = mount.FromProto(er.Mounts)
 	)
 
 	var opts []diff.ApplyOpt
@@ -109,6 +106,7 @@ func (l *local) Apply(ctx context.Context, er *diffapi.ApplyRequest, _ ...grpc.C
 		}
 		opts = append(opts, diff.WithPayloads(payloads))
 	}
+	opts = append(opts, diff.WithSyncFs(er.SyncFs))
 
 	for _, differ := range l.differs {
 		ocidesc, err = differ.Apply(ctx, desc, mounts, opts...)
@@ -122,7 +120,7 @@ func (l *local) Apply(ctx context.Context, er *diffapi.ApplyRequest, _ ...grpc.C
 	}
 
 	return &diffapi.ApplyResponse{
-		Applied: fromDescriptor(ocidesc),
+		Applied: oci.DescriptorToProto(ocidesc),
 	}, nil
 
 }
@@ -131,8 +129,8 @@ func (l *local) Diff(ctx context.Context, dr *diffapi.DiffRequest, _ ...grpc.Cal
 	var (
 		ocidesc ocispec.Descriptor
 		err     error
-		aMounts = toMounts(dr.Left)
-		bMounts = toMounts(dr.Right)
+		aMounts = mount.FromProto(dr.Left)
+		bMounts = mount.FromProto(dr.Right)
 	)
 
 	var opts []diff.Opt
@@ -161,36 +159,6 @@ func (l *local) Diff(ctx context.Context, dr *diffapi.DiffRequest, _ ...grpc.Cal
 	}
 
 	return &diffapi.DiffResponse{
-		Diff: fromDescriptor(ocidesc),
+		Diff: oci.DescriptorToProto(ocidesc),
 	}, nil
-}
-
-func toMounts(apim []*types.Mount) []mount.Mount {
-	mounts := make([]mount.Mount, len(apim))
-	for i, m := range apim {
-		mounts[i] = mount.Mount{
-			Type:    m.Type,
-			Source:  m.Source,
-			Options: m.Options,
-		}
-	}
-	return mounts
-}
-
-func toDescriptor(d *types.Descriptor) ocispec.Descriptor {
-	return ocispec.Descriptor{
-		MediaType:   d.MediaType,
-		Digest:      digest.Digest(d.Digest),
-		Size:        d.Size,
-		Annotations: d.Annotations,
-	}
-}
-
-func fromDescriptor(d ocispec.Descriptor) *types.Descriptor {
-	return &types.Descriptor{
-		MediaType:   d.MediaType,
-		Digest:      d.Digest.String(),
-		Size:        d.Size,
-		Annotations: d.Annotations,
-	}
 }

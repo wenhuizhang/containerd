@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/typeurl"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/typeurl/v2"
 )
 
 // Sandbox is an object stored in metadata database
@@ -35,6 +35,8 @@ type Sandbox struct {
 	Runtime RuntimeOpts
 	// Spec carries the runtime specification used to implement the sandbox
 	Spec typeurl.Any
+	// Sandboxer is the sandbox controller who manages the sandbox
+	Sandboxer string
 	// CreatedAt is the time at which the sandbox was created
 	CreatedAt time.Time
 	// UpdatedAt is the time at which the sandbox was updated

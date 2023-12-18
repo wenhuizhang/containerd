@@ -22,9 +22,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/platforms"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/platforms"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
@@ -294,8 +294,8 @@ func LimitManifests(f HandlerFunc, m platforms.MatchComparer, n int) HandlerFunc
 			return children, err
 		}
 
-		switch desc.MediaType {
-		case ocispec.MediaTypeImageIndex, MediaTypeDockerSchema2ManifestList:
+		// only limit manifests from an index
+		if IsIndexType(desc.MediaType) {
 			sort.SliceStable(children, func(i, j int) bool {
 				if children[i].Platform == nil {
 					return false
@@ -314,8 +314,6 @@ func LimitManifests(f HandlerFunc, m platforms.MatchComparer, n int) HandlerFunc
 					children = children[:n]
 				}
 			}
-		default:
-			// only limit manifests from an index
 		}
 		return children, nil
 	}

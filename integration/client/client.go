@@ -23,16 +23,17 @@ import (
 	"os"
 	"testing"
 
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/defaults"
-	"github.com/containerd/containerd/log/logtest"
-	"github.com/containerd/containerd/namespaces"
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/defaults"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/log/logtest"
 )
 
 const (
 	testNamespace = "testing"
 )
 
+//nolint:unused // some variables used in fuzz but not all platforms
 var (
 	address           string
 	ctrdStdioFilePath string

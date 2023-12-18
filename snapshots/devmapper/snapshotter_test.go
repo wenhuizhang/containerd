@@ -21,27 +21,27 @@ package devmapper
 import (
 	"context"
 	_ "crypto/sha256"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/containerd/continuity/fs/fstest"
-	"github.com/hashicorp/go-multierror"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/containerd/containerd/mount"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/pkg/testutil"
-	"github.com/containerd/containerd/snapshots"
-	"github.com/containerd/containerd/snapshots/devmapper/dmsetup"
-	"github.com/containerd/containerd/snapshots/testsuite"
+	"github.com/containerd/containerd/v2/mount"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/containerd/v2/pkg/testutil"
+	"github.com/containerd/containerd/v2/snapshots"
+	"github.com/containerd/containerd/v2/snapshots/devmapper/dmsetup"
+	"github.com/containerd/containerd/v2/snapshots/testsuite"
+	"github.com/containerd/log"
 )
 
 func TestSnapshotterSuite(t *testing.T) {
 	testutil.RequiresRoot(t)
 
-	logrus.SetLevel(logrus.DebugLevel)
+	assert.NoError(t, log.SetLevel("debug"))
 
 	snapshotterFn := func(ctx context.Context, root string) (snapshots.Snapshotter, func() error, error) {
 		poolName := fmt.Sprintf("containerd-snapshotter-suite-pool-%d", time.Now().Nanosecond())
@@ -138,7 +138,7 @@ func TestMkfsXfsNonDefault(t *testing.T) {
 func TestMultipleXfsMounts(t *testing.T) {
 	testutil.RequiresRoot(t)
 
-	logrus.SetLevel(logrus.DebugLevel)
+	assert.NoError(t, log.SetLevel("debug"))
 
 	ctx := context.Background()
 	ctx = namespaces.WithNamespace(ctx, "testsuite")
@@ -199,11 +199,11 @@ func createSnapshotter(ctx context.Context, t *testing.T, config *Config) (snaps
 
 	// Remove device mapper pool and detach loop devices after test completes
 	removePool := func() error {
-		result := multierror.Append(
+		result := errors.Join(
 			snap.pool.RemovePool(ctx),
 			mount.DetachLoopDevice(loopDataDevice, loopMetaDevice))
 
-		return result.ErrorOrNil()
+		return result
 	}
 
 	// Pool cleanup should be called before closing metadata store (as we need to retrieve device names)

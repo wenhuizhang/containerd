@@ -22,10 +22,9 @@ import (
 	"path"
 	"sync"
 
-	"github.com/containerd/containerd/log"
-	"github.com/sirupsen/logrus"
+	"github.com/containerd/log"
 
-	"github.com/containerd/containerd/version"
+	"github.com/containerd/containerd/v2/version"
 	nri "github.com/containerd/nri/pkg/adaptation"
 )
 
@@ -80,7 +79,7 @@ type API interface {
 	// NotifyContainerExit handles the exit event of a container.
 	NotifyContainerExit(context.Context, PodSandbox, Container)
 
-	// StopContainer relays container removal events to NRI.
+	// RemoveContainer relays container removal events to NRI.
 	RemoveContainer(context.Context, PodSandbox, Container) error
 }
 
@@ -110,7 +109,7 @@ func New(cfg *Config) (API, error) {
 	}
 
 	if cfg.Disable {
-		logrus.Info("NRI interface is disabled by configuration.")
+		log.L.Info("NRI interface is disabled by configuration.")
 		return l, nil
 	}
 
@@ -123,6 +122,8 @@ func New(cfg *Config) (API, error) {
 		err      error
 	)
 
+	cfg.ConfigureTimeouts()
+
 	l.nri, err = nri.New(name, version, syncFn, updateFn, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize NRI interface: %w", err)
@@ -130,7 +131,7 @@ func New(cfg *Config) (API, error) {
 
 	l.state = make(map[string]State)
 
-	logrus.Info("created NRI interface")
+	log.L.Info("created NRI interface")
 
 	return l, nil
 }

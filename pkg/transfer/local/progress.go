@@ -22,10 +22,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/pkg/transfer"
-	"github.com/containerd/containerd/remotes"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/pkg/transfer"
+	"github.com/containerd/containerd/v2/remotes"
+	"github.com/containerd/log"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
@@ -87,6 +87,7 @@ func (j *ProgressTracker) HandleProgress(ctx context.Context, pf transfer.Progre
 	// Instead of ticker, just delay
 	jobs := map[digest.Digest]*jobStatus{}
 	tc := time.NewTicker(time.Millisecond * 300)
+	defer tc.Stop()
 
 	update := func() {
 		// TODO: Filter by references
@@ -208,7 +209,7 @@ func (j *ProgressTracker) MarkExists(desc ocispec.Descriptor) {
 
 }
 
-// Adds hierarchy information
+// AddChildren adds hierarchy information
 func (j *ProgressTracker) AddChildren(desc ocispec.Descriptor, children []ocispec.Descriptor) {
 	if j == nil || len(children) == 0 {
 		return

@@ -29,14 +29,13 @@ import (
 
 	runtimespec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/selinux/go-selinux/label"
-	"github.com/sirupsen/logrus"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 
-	"github.com/containerd/containerd/containers"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/mount"
-	"github.com/containerd/containerd/oci"
-	osinterface "github.com/containerd/containerd/pkg/os"
+	"github.com/containerd/containerd/v2/containers"
+	"github.com/containerd/containerd/v2/mount"
+	"github.com/containerd/containerd/v2/oci"
+	osinterface "github.com/containerd/containerd/v2/pkg/os"
+	"github.com/containerd/log"
 )
 
 // WithMounts sorts and adds runtime and CRI mounts to the spec
@@ -163,11 +162,35 @@ func WithMounts(osi osinterface.OS, config *runtime.ContainerConfig, extra []*ru
 					return fmt.Errorf("relabel %q with %q failed: %w", src, mountLabel, err)
 				}
 			}
+
+			var uidMapping []runtimespec.LinuxIDMapping
+			if mount.UidMappings != nil {
+				for _, mapping := range mount.UidMappings {
+					uidMapping = append(uidMapping, runtimespec.LinuxIDMapping{
+						HostID:      mapping.HostId,
+						ContainerID: mapping.ContainerId,
+						Size:        mapping.Length,
+					})
+				}
+			}
+			var gidMapping []runtimespec.LinuxIDMapping
+			if mount.GidMappings != nil {
+				for _, mapping := range mount.GidMappings {
+					gidMapping = append(gidMapping, runtimespec.LinuxIDMapping{
+						HostID:      mapping.HostId,
+						ContainerID: mapping.ContainerId,
+						Size:        mapping.Length,
+					})
+				}
+			}
+
 			s.Mounts = append(s.Mounts, runtimespec.Mount{
 				Source:      src,
 				Destination: dst,
 				Type:        "bind",
 				Options:     options,
+				UIDMappings: uidMapping,
+				GIDMappings: gidMapping,
 			})
 		}
 		return nil
@@ -326,7 +349,7 @@ func WithResources(resources *runtime.LinuxContainerResources, tolerateMissingHu
 				s.Linux.Resources.Memory.Swap = &limit
 			}
 		}
-		if swapLimit != 0 {
+		if swapLimit != 0 && SwapControllerAvailable() {
 			s.Linux.Resources.Memory.Swap = &swapLimit
 		}
 
@@ -343,7 +366,7 @@ func WithResources(resources *runtime.LinuxContainerResources, tolerateMissingHu
 					return errors.New("huge pages limits are specified but hugetlb cgroup controller is missing. " +
 						"Please set tolerate_missing_hugetlb_controller to `true` to ignore this error")
 				}
-				logrus.Warn("hugetlb cgroup controller is absent. skipping huge pages limits")
+				log.L.Warn("hugetlb cgroup controller is absent. skipping huge pages limits")
 			}
 		}
 

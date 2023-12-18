@@ -17,10 +17,10 @@
 package sandbox
 
 import (
-	"github.com/containerd/containerd/api/types"
-	"github.com/containerd/containerd/protobuf"
-	gogo_types "github.com/containerd/containerd/protobuf/types"
-	"github.com/containerd/typeurl"
+	"github.com/containerd/containerd/v2/api/types"
+	"github.com/containerd/containerd/v2/protobuf"
+	gogo_types "github.com/containerd/containerd/v2/protobuf/types"
+	"github.com/containerd/typeurl/v2"
 )
 
 // ToProto will map Sandbox struct to it's protobuf definition
@@ -35,6 +35,7 @@ func ToProto(sandbox *Sandbox) *types.Sandbox {
 			Name:    sandbox.Runtime.Name,
 			Options: protobuf.FromAny(sandbox.Runtime.Options),
 		},
+		Sandboxer:  sandbox.Sandboxer,
 		Labels:     sandbox.Labels,
 		CreatedAt:  protobuf.ToTimestamp(sandbox.CreatedAt),
 		UpdatedAt:  protobuf.ToTimestamp(sandbox.UpdatedAt),
@@ -61,6 +62,7 @@ func FromProto(sandboxpb *types.Sandbox) Sandbox {
 		Labels:     sandboxpb.Labels,
 		Runtime:    runtime,
 		Spec:       sandboxpb.Spec,
+		Sandboxer:  sandboxpb.Sandboxer,
 		CreatedAt:  protobuf.FromTimestamp(sandboxpb.CreatedAt),
 		UpdatedAt:  protobuf.FromTimestamp(sandboxpb.UpdatedAt),
 		Extensions: extensions,

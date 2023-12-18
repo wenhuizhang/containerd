@@ -23,14 +23,13 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/containerd/containerd/identifiers"
-	"github.com/containerd/containerd/mount"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/typeurl"
+	"github.com/containerd/containerd/v2/identifiers"
+	"github.com/containerd/containerd/v2/mount"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/containerd/v2/oci"
+	"github.com/containerd/typeurl/v2"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
-
-const configFilename = "config.json"
 
 // LoadBundle loads an existing bundle from disk
 func LoadBundle(ctx context.Context, root, id string) (*Bundle, error) {
@@ -107,9 +106,10 @@ func NewBundle(ctx context.Context, root, state, id string, spec typeurl.Any) (b
 	}
 	if spec := spec.GetValue(); spec != nil {
 		// write the spec to the bundle
-		err = os.WriteFile(filepath.Join(b.Path, configFilename), spec, 0666)
+		specPath := filepath.Join(b.Path, oci.ConfigFilename)
+		err = os.WriteFile(specPath, spec, 0666)
 		if err != nil {
-			return nil, fmt.Errorf("failed to write %s", configFilename)
+			return nil, fmt.Errorf("failed to write bundle spec: %w", err)
 		}
 	}
 	return b, nil
@@ -130,7 +130,7 @@ func (b *Bundle) Delete() error {
 	work, werr := os.Readlink(filepath.Join(b.Path, "work"))
 	rootfs := filepath.Join(b.Path, "rootfs")
 	if runtime.GOOS != "darwin" {
-		if err := mount.UnmountAll(rootfs, 0); err != nil {
+		if err := mount.UnmountRecursive(rootfs, 0); err != nil {
 			return fmt.Errorf("unmount rootfs %s: %w", rootfs, err)
 		}
 	}

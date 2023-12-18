@@ -23,8 +23,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/containerd/containerd/containers"
-	"github.com/containerd/containerd/pkg/testutil"
+	"github.com/containerd/containerd/v2/containers"
+	"github.com/containerd/containerd/v2/pkg/cap"
+	"github.com/containerd/containerd/v2/pkg/testutil"
 	"github.com/containerd/continuity/fs/fstest"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/stretchr/testify/assert"
@@ -70,6 +71,7 @@ guest:x:405:100:guest:/dev/null:/sbin/nologin
 		},
 	}
 	for _, testCase := range testCases {
+		testCase := testCase
 		t.Run(fmt.Sprintf("user %d", testCase.userID), func(t *testing.T) {
 			t.Parallel()
 			s := Spec{
@@ -129,6 +131,7 @@ guest:x:405:100:guest:/dev/null:/sbin/nologin
 		},
 	}
 	for _, testCase := range testCases {
+		testCase := testCase
 		t.Run(testCase.user, func(t *testing.T) {
 			t.Parallel()
 			s := Spec{
@@ -178,26 +181,27 @@ sys:x:3:root,bin,adm
 	}{
 		{
 			user:     "root",
-			expected: []uint32{},
+			expected: []uint32{0, 1, 2, 3},
 		},
 		{
 			user:     "1000",
-			expected: []uint32{},
+			expected: []uint32{0},
 		},
 		{
 			user:     "bin",
-			expected: []uint32{2, 3},
+			expected: []uint32{0, 2, 3},
 		},
 		{
 			user:     "bin:root",
-			expected: []uint32{},
+			expected: []uint32{0},
 		},
 		{
 			user:     "daemon",
-			expected: []uint32{1},
+			expected: []uint32{0, 1},
 		},
 	}
 	for _, testCase := range testCases {
+		testCase := testCase
 		t.Run(testCase.user, func(t *testing.T) {
 			t.Parallel()
 			s := Spec{
@@ -210,6 +214,91 @@ sys:x:3:root,bin,adm
 			assert.NoError(t, err)
 			assert.Equal(t, testCase.expected, s.Process.User.AdditionalGids)
 		})
+	}
+}
+
+// withAllKnownCaps sets all known capabilities.
+// This function differs from the exported function
+// by also setting inheritable capabilities.
+func withAllKnownCaps(s *specs.Spec) error {
+	caps := cap.Known()
+	if err := WithCapabilities(caps)(context.Background(), nil, nil, s); err != nil {
+		return err
+	}
+	s.Process.Capabilities.Inheritable = caps
+	return nil
+}
+
+func TestSetCaps(t *testing.T) {
+	t.Parallel()
+
+	var s specs.Spec
+
+	// Add base set of capabilities
+	if err := WithCapabilities([]string{"CAP_CHOWN"})(context.Background(), nil, nil, &s); err != nil {
+		t.Fatal(err)
+	}
+	for i, cl := range [][]string{
+		s.Process.Capabilities.Bounding,
+		s.Process.Capabilities.Effective,
+		s.Process.Capabilities.Permitted,
+	} {
+		if !capsContain(cl, "CAP_CHOWN") {
+			t.Errorf("cap list %d does not contain added cap", i)
+		}
+		if len(cl) != 1 {
+			t.Errorf("cap list %d does not have only 1 cap", i)
+		}
+	}
+	if len(s.Process.Capabilities.Inheritable) != 0 {
+		t.Errorf("inheritable cap list is not empty")
+	}
+
+	// Add all caps then overwrite with single cap
+	if err := withAllKnownCaps(&s); err != nil {
+		t.Fatal(err)
+	}
+	if err := WithCapabilities([]string{"CAP_CHOWN"})(context.Background(), nil, nil, &s); err != nil {
+		t.Fatal(err)
+	}
+	for i, cl := range [][]string{
+		s.Process.Capabilities.Bounding,
+		s.Process.Capabilities.Effective,
+		s.Process.Capabilities.Permitted,
+		s.Process.Capabilities.Inheritable,
+	} {
+		if !capsContain(cl, "CAP_CHOWN") {
+			t.Errorf("cap list %d does not contain added cap", i)
+		}
+		if len(cl) != 1 {
+			t.Errorf("cap list %d does not have only 1 cap", i)
+		}
+	}
+
+	// Add all caps, drop single cap, then overwrite with single cap
+	if err := withAllKnownCaps(&s); err != nil {
+		t.Fatal(err)
+	}
+	if err := WithDroppedCapabilities([]string{"CAP_CHOWN"})(context.Background(), nil, nil, &s); err != nil {
+		t.Fatal(err)
+	}
+	if err := WithCapabilities([]string{"CAP_CHOWN"})(context.Background(), nil, nil, &s); err != nil {
+		t.Fatal(err)
+	}
+	for i, cl := range [][]string{
+		s.Process.Capabilities.Bounding,
+		s.Process.Capabilities.Effective,
+		s.Process.Capabilities.Permitted,
+	} {
+		if !capsContain(cl, "CAP_CHOWN") {
+			t.Errorf("cap list %d does not contain added cap", i)
+		}
+		if len(cl) != 1 {
+			t.Errorf("cap list %d does not have only 1 cap", i)
+		}
+	}
+	if len(s.Process.Capabilities.Inheritable) != 0 {
+		t.Errorf("inheritable cap list is not empty")
 	}
 }
 
@@ -230,6 +319,9 @@ func TestAddCaps(t *testing.T) {
 			t.Errorf("cap list %d does not contain added cap", i)
 		}
 	}
+	if len(s.Process.Capabilities.Inheritable) != 0 {
+		t.Errorf("inheritable cap list is not empty")
+	}
 }
 
 func TestDropCaps(t *testing.T) {
@@ -237,7 +329,7 @@ func TestDropCaps(t *testing.T) {
 
 	var s specs.Spec
 
-	if err := WithAllKnownCapabilities(context.Background(), nil, nil, &s); err != nil {
+	if err := withAllKnownCaps(&s); err != nil {
 		t.Fatal(err)
 	}
 	if err := WithDroppedCapabilities([]string{"CAP_CHOWN"})(context.Background(), nil, nil, &s); err != nil {
@@ -248,6 +340,7 @@ func TestDropCaps(t *testing.T) {
 		s.Process.Capabilities.Bounding,
 		s.Process.Capabilities.Effective,
 		s.Process.Capabilities.Permitted,
+		s.Process.Capabilities.Inheritable,
 	} {
 		if capsContain(cl, "CAP_CHOWN") {
 			t.Errorf("cap list %d contains dropped cap", i)
@@ -255,7 +348,7 @@ func TestDropCaps(t *testing.T) {
 	}
 
 	// Add all capabilities back and drop a different cap.
-	if err := WithAllKnownCapabilities(context.Background(), nil, nil, &s); err != nil {
+	if err := withAllKnownCaps(&s); err != nil {
 		t.Fatal(err)
 	}
 	if err := WithDroppedCapabilities([]string{"CAP_FOWNER"})(context.Background(), nil, nil, &s); err != nil {
@@ -266,6 +359,7 @@ func TestDropCaps(t *testing.T) {
 		s.Process.Capabilities.Bounding,
 		s.Process.Capabilities.Effective,
 		s.Process.Capabilities.Permitted,
+		s.Process.Capabilities.Inheritable,
 	} {
 		if capsContain(cl, "CAP_FOWNER") {
 			t.Errorf("cap list %d contains dropped cap", i)
@@ -286,6 +380,25 @@ func TestDropCaps(t *testing.T) {
 		s.Process.Capabilities.Bounding,
 		s.Process.Capabilities.Effective,
 		s.Process.Capabilities.Permitted,
+		s.Process.Capabilities.Inheritable,
+	} {
+		if len(cl) != 0 {
+			t.Errorf("cap list %d is not empty", i)
+		}
+	}
+
+	// Add all capabilities back and drop all
+	if err := withAllKnownCaps(&s); err != nil {
+		t.Fatal(err)
+	}
+	if err := WithCapabilities(nil)(context.Background(), nil, nil, &s); err != nil {
+		t.Fatal(err)
+	}
+	for i, cl := range [][]string{
+		s.Process.Capabilities.Bounding,
+		s.Process.Capabilities.Effective,
+		s.Process.Capabilities.Permitted,
+		s.Process.Capabilities.Inheritable,
 	} {
 		if len(cl) != 0 {
 			t.Errorf("cap list %d is not empty", i)
@@ -458,8 +571,9 @@ daemon:x:2:root,bin,daemon
 		err            string
 	}{
 		{
-			name:   "no additional gids",
-			groups: []string{},
+			name:     "no additional gids",
+			groups:   []string{},
+			expected: []uint32{0},
 		},
 		{
 			name:     "no additional gids, append root gid",
@@ -469,7 +583,7 @@ daemon:x:2:root,bin,daemon
 		{
 			name:     "no additional gids, append bin and daemon gids",
 			groups:   []string{"bin", "daemon"},
-			expected: []uint32{1, 2},
+			expected: []uint32{0, 1, 2},
 		},
 		{
 			name:           "has root additional gids, append bin and daemon gids",
@@ -480,16 +594,18 @@ daemon:x:2:root,bin,daemon
 		{
 			name:     "append group id",
 			groups:   []string{"999"},
-			expected: []uint32{999},
+			expected: []uint32{0, 999},
 		},
 		{
-			name:   "unknown group",
-			groups: []string{"unknown"},
-			err:    "unable to find group unknown",
+			name:     "unknown group",
+			groups:   []string{"unknown"},
+			err:      "unable to find group unknown",
+			expected: []uint32{0},
 		},
 	}
 
 	for _, testCase := range testCases {
+		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 			s := Spec{
@@ -511,6 +627,65 @@ daemon:x:2:root,bin,daemon
 		})
 	}
 }
+
+func TestWithAppendAdditionalGroupsNoEtcGroup(t *testing.T) {
+	t.Parallel()
+	td := t.TempDir()
+	apply := fstest.Apply()
+	if err := apply.Apply(td); err != nil {
+		t.Fatalf("failed to apply: %v", err)
+	}
+	c := containers.Container{ID: t.Name()}
+
+	testCases := []struct {
+		name           string
+		additionalGIDs []uint32
+		groups         []string
+		expected       []uint32
+		err            string
+	}{
+		{
+			name:     "no additional gids",
+			groups:   []string{},
+			expected: []uint32{0},
+		},
+		{
+			name:     "no additional gids, append root group",
+			groups:   []string{"root"},
+			err:      fmt.Sprintf("unable to find group root: open %s: no such file or directory", filepath.Join(td, "etc", "group")),
+			expected: []uint32{0},
+		},
+		{
+			name:     "append group id",
+			groups:   []string{"999"},
+			expected: []uint32{0, 999},
+		},
+	}
+
+	for _, testCase := range testCases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			s := Spec{
+				Version: specs.Version,
+				Root: &specs.Root{
+					Path: td,
+				},
+				Process: &specs.Process{
+					User: specs.User{
+						AdditionalGids: testCase.additionalGIDs,
+					},
+				},
+			}
+			err := WithAppendAdditionalGroups(testCase.groups...)(context.Background(), nil, &c, &s)
+			if err != nil {
+				assert.EqualError(t, err, testCase.err)
+			}
+			assert.Equal(t, testCase.expected, s.Process.User.AdditionalGids)
+		})
+	}
+}
+
 func TestWithLinuxDeviceFollowSymlinks(t *testing.T) {
 
 	// Create symlink to /dev/zero for the symlink test case

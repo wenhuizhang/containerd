@@ -23,13 +23,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/filters"
-	"github.com/containerd/containerd/identifiers"
-	"github.com/containerd/containerd/metadata/boltutil"
-	"github.com/containerd/containerd/namespaces"
-	api "github.com/containerd/containerd/sandbox"
-	"github.com/containerd/typeurl"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/filters"
+	"github.com/containerd/containerd/v2/identifiers"
+	"github.com/containerd/containerd/v2/metadata/boltutil"
+	"github.com/containerd/containerd/v2/namespaces"
+	api "github.com/containerd/containerd/v2/sandbox"
+	"github.com/containerd/typeurl/v2"
 	"go.etcd.io/bbolt"
 )
 
@@ -58,7 +58,7 @@ func (s *sandboxStore) Create(ctx context.Context, sandbox api.Sandbox) (api.San
 		return api.Sandbox{}, fmt.Errorf("failed to validate sandbox: %w", err)
 	}
 
-	if err := s.db.Update(func(tx *bbolt.Tx) error {
+	if err := update(ctx, s.db, func(tx *bbolt.Tx) error {
 		parent, err := createSandboxBucket(tx, ns)
 		if err != nil {
 			return fmt.Errorf("create error: %w", err)
@@ -137,10 +137,6 @@ func (s *sandboxStore) Update(ctx context.Context, sandbox api.Sandbox, fieldpat
 		}
 
 		updated.UpdatedAt = time.Now().UTC()
-
-		if err := s.validate(&updated); err != nil {
-			return err
-		}
 
 		if err := s.write(parent, &updated, true); err != nil {
 			return err
@@ -243,6 +239,9 @@ func (s *sandboxStore) Delete(ctx context.Context, id string) error {
 		}
 
 		if err := buckets.DeleteBucket([]byte(id)); err != nil {
+			if err == bbolt.ErrBucketNotFound {
+				err = errdefs.ErrNotFound
+			}
 			return fmt.Errorf("failed to delete sandbox %q: %w", id, err)
 		}
 
@@ -255,6 +254,10 @@ func (s *sandboxStore) Delete(ctx context.Context, id string) error {
 }
 
 func (s *sandboxStore) write(parent *bbolt.Bucket, instance *api.Sandbox, overwrite bool) error {
+	if err := s.validate(instance); err != nil {
+		return err
+	}
+
 	var (
 		bucket *bbolt.Bucket
 		err    error
@@ -267,13 +270,11 @@ func (s *sandboxStore) write(parent *bbolt.Bucket, instance *api.Sandbox, overwr
 			return err
 		}
 	} else {
-		bucket = parent.Bucket(id)
-		if bucket != nil {
-			return fmt.Errorf("sandbox bucket %q already exists: %w", instance.ID, errdefs.ErrAlreadyExists)
-		}
-
 		bucket, err = parent.CreateBucket(id)
 		if err != nil {
+			if err == bbolt.ErrBucketExists {
+				return fmt.Errorf("sandbox bucket %q already exists: %w", instance.ID, errdefs.ErrAlreadyExists)
+			}
 			return err
 		}
 	}
@@ -291,6 +292,10 @@ func (s *sandboxStore) write(parent *bbolt.Bucket, instance *api.Sandbox, overwr
 	}
 
 	if err := boltutil.WriteAny(bucket, bucketKeySpec, instance.Spec); err != nil {
+		return err
+	}
+
+	if err := bucket.Put(bucketKeySandboxer, []byte(instance.Sandboxer)); err != nil {
 		return err
 	}
 
@@ -351,6 +356,12 @@ func (s *sandboxStore) read(parent *bbolt.Bucket, id []byte) (api.Sandbox, error
 	inst.Extensions, err = boltutil.ReadExtensions(bucket)
 	if err != nil {
 		return api.Sandbox{}, err
+	}
+	sandboxer := bucket.Get(bucketKeySandboxer)
+	if sandboxer == nil {
+		inst.Sandboxer = ""
+	} else {
+		inst.Sandboxer = string(sandboxer)
 	}
 
 	return inst, nil

@@ -23,16 +23,17 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/remotes"
-	remoteserrors "github.com/containerd/containerd/remotes/errors"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/remotes"
+	remoteserrors "github.com/containerd/containerd/v2/remotes/errors"
+	"github.com/containerd/log"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
@@ -102,12 +103,10 @@ func (p dockerPusher) push(ctx context.Context, desc ocispec.Descriptor, ref str
 		host       = hosts[0]
 	)
 
-	switch desc.MediaType {
-	case images.MediaTypeDockerSchema2Manifest, images.MediaTypeDockerSchema2ManifestList,
-		ocispec.MediaTypeImageManifest, ocispec.MediaTypeImageIndex:
+	if images.IsManifestType(desc.MediaType) || images.IsIndexType(desc.MediaType) {
 		isManifest = true
 		existCheck = getManifestPath(p.object, desc.Digest)
-	default:
+	} else {
 		existCheck = []string{"blobs", desc.Digest.String()}
 	}
 
@@ -137,10 +136,11 @@ func (p dockerPusher) push(ctx context.Context, desc ocispec.Descriptor, ref str
 			if exists {
 				p.tracker.SetStatus(ref, Status{
 					Committed: true,
+					PushStatus: PushStatus{
+						Exists: true,
+					},
 					Status: content.Status{
-						Ref:    ref,
-						Total:  desc.Size,
-						Offset: desc.Size,
+						Ref: ref,
 						// TODO: Set updated time?
 					},
 				})
@@ -164,6 +164,7 @@ func (p dockerPusher) push(ctx context.Context, desc ocispec.Descriptor, ref str
 		// Start upload request
 		req = p.request(host, http.MethodPost, "blobs", "uploads/")
 
+		mountedFrom := ""
 		var resp *http.Response
 		if fromRepo := selectRepositoryMountCandidate(p.refspec, desc.Annotations); fromRepo != "" {
 			preq := requestWithMountFrom(req, desc.Digest.String(), fromRepo)
@@ -180,11 +181,14 @@ func (p dockerPusher) push(ctx context.Context, desc ocispec.Descriptor, ref str
 				return nil, err
 			}
 
-			if resp.StatusCode == http.StatusUnauthorized {
+			switch resp.StatusCode {
+			case http.StatusUnauthorized:
 				log.G(ctx).Debugf("failed to mount from repository %s", fromRepo)
 
 				resp.Body.Close()
 				resp = nil
+			case http.StatusCreated:
+				mountedFrom = path.Join(p.refspec.Hostname(), fromRepo)
 			}
 		}
 
@@ -204,6 +208,9 @@ func (p dockerPusher) push(ctx context.Context, desc ocispec.Descriptor, ref str
 		case http.StatusCreated:
 			p.tracker.SetStatus(ref, Status{
 				Committed: true,
+				PushStatus: PushStatus{
+					MountedFrom: mountedFrom,
+				},
 				Status: content.Status{
 					Ref:    ref,
 					Total:  desc.Size,
@@ -238,13 +245,16 @@ func (p dockerPusher) push(ctx context.Context, desc ocispec.Descriptor, ref str
 			}
 
 			if lurl.Host != lhost.Host || lhost.Scheme != lurl.Scheme {
-
 				lhost.Scheme = lurl.Scheme
 				lhost.Host = lurl.Host
-				log.G(ctx).WithField("host", lhost.Host).WithField("scheme", lhost.Scheme).Debug("upload changed destination")
 
-				// Strip authorizer if change to host or scheme
-				lhost.Authorizer = nil
+				// Check if different than what was requested, accounting for fallback in the transport layer
+				requested := resp.Request.URL
+				if requested.Host != lhost.Host || requested.Scheme != lhost.Scheme {
+					// Strip authorizer if change to host or scheme
+					lhost.Authorizer = nil
+					log.G(ctx).WithField("host", lhost.Host).WithField("scheme", lhost.Scheme).Debug("upload changed destination, authorizer removed")
+				}
 			}
 		}
 		q := lurl.Query()
@@ -380,17 +390,24 @@ func (pw *pushWriter) Write(p []byte) (n int, err error) {
 
 			// If content has already been written, the bytes
 			// cannot be written and the caller must reset
-			if status.Offset > 0 {
-				status.Offset = 0
-				status.UpdatedAt = time.Now()
-				pw.tracker.SetStatus(pw.ref, status)
-				return 0, content.ErrReset
-			}
+			status.Offset = 0
+			status.UpdatedAt = time.Now()
+			pw.tracker.SetStatus(pw.ref, status)
+			return 0, content.ErrReset
 		default:
 		}
 	}
 
 	n, err = pw.pipe.Write(p)
+	if errors.Is(err, io.ErrClosedPipe) {
+		// if the pipe is closed, we might have the original error on the error
+		// channel - so we should try and get it
+		select {
+		case err2 := <-pw.errC:
+			err = err2
+		default:
+		}
+	}
 	status.Offset += int64(n)
 	status.UpdatedAt = time.Now()
 	pw.tracker.SetStatus(pw.ref, status)
@@ -431,7 +448,7 @@ func (pw *pushWriter) Digest() digest.Digest {
 
 func (pw *pushWriter) Commit(ctx context.Context, size int64, expected digest.Digest, opts ...content.Opt) error {
 	// Check whether read has already thrown an error
-	if _, err := pw.pipe.Write([]byte{}); err != nil && err != io.ErrClosedPipe {
+	if _, err := pw.pipe.Write([]byte{}); err != nil && !errors.Is(err, io.ErrClosedPipe) {
 		return fmt.Errorf("pipe error before commit: %w", err)
 	}
 
@@ -442,9 +459,7 @@ func (pw *pushWriter) Commit(ctx context.Context, size int64, expected digest.Di
 	var resp *http.Response
 	select {
 	case err := <-pw.errC:
-		if err != nil {
-			return err
-		}
+		return err
 	case resp = <-pw.respC:
 		defer resp.Body.Close()
 	case p, ok := <-pw.pipeC:
@@ -456,18 +471,17 @@ func (pw *pushWriter) Commit(ctx context.Context, size int64, expected digest.Di
 		}
 		pw.pipe.CloseWithError(content.ErrReset)
 		pw.pipe = p
+
+		// If content has already been written, the bytes
+		// cannot be written again and the caller must reset
 		status, err := pw.tracker.GetStatus(pw.ref)
 		if err != nil {
 			return err
 		}
-		// If content has already been written, the bytes
-		// cannot be written again and the caller must reset
-		if status.Offset > 0 {
-			status.Offset = 0
-			status.UpdatedAt = time.Now()
-			pw.tracker.SetStatus(pw.ref, status)
-			return content.ErrReset
-		}
+		status.Offset = 0
+		status.UpdatedAt = time.Now()
+		pw.tracker.SetStatus(pw.ref, status)
+		return content.ErrReset
 	}
 
 	// 201 is specified return status, some registries return

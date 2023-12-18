@@ -26,15 +26,15 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/cmd/ctr/commands"
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/pkg/progress"
-	"github.com/containerd/containerd/platforms"
-	"github.com/containerd/containerd/remotes"
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/cmd/ctr/commands"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/pkg/progress"
+	"github.com/containerd/containerd/v2/platforms"
+	"github.com/containerd/containerd/v2/remotes"
+	"github.com/containerd/log"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/urfave/cli"
@@ -42,10 +42,10 @@ import (
 
 var fetchCommand = cli.Command{
 	Name:      "fetch",
-	Usage:     "fetch all content for an image into containerd",
+	Usage:     "Fetch all content for an image into containerd",
 	ArgsUsage: "[flags] <remote> <object>",
 	Description: `Fetch an image into containerd.
-	
+
 This command ensures that containerd has all the necessary resources to build
 an image's rootfs and convert the configuration to a runtime format supported
 by containerd.
@@ -68,8 +68,13 @@ Most of this is experimental and there are few leaps to make this work.`,
 			Usage: "Pull content from all platforms",
 		},
 		cli.BoolFlag{
-			Name:  "all-metadata",
-			Usage: "Pull metadata for all platforms",
+			Name:   "all-metadata",
+			Usage:  "(Deprecated: use skip-metadata) Pull metadata for all platforms",
+			Hidden: true,
+		},
+		cli.BoolFlag{
+			Name:  "skip-metadata",
+			Usage: "Skips metadata for unused platforms (Image may be unable to be pushed without metadata)",
 		},
 		cli.BoolFlag{
 			Name:  "metadata-only",
@@ -141,7 +146,7 @@ func NewFetchConfig(ctx context.Context, clicontext *cli.Context) (*FetchConfig,
 		config.AllMetadata = true
 		// Any with an empty set is None
 		config.PlatformMatcher = platforms.Any()
-	} else if clicontext.Bool("all-metadata") {
+	} else if !clicontext.Bool("skip-metadata") {
 		config.AllMetadata = true
 	}
 

@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/errdefs"
 	"github.com/moby/locker"
 )
 
@@ -36,6 +36,17 @@ type Status struct {
 
 	// UploadUUID is used by the Docker registry to reference blob uploads
 	UploadUUID string
+
+	// PushStatus contains status related to push.
+	PushStatus
+}
+
+type PushStatus struct {
+	// MountedFrom is the source content was cross-repo mounted from (empty if no cross-repo mount was performed).
+	MountedFrom string
+
+	// Exists indicates whether content already exists in the repository and wasn't uploaded.
+	Exists bool
 }
 
 // StatusTracker to track status of operations

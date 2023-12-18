@@ -19,24 +19,26 @@ package leases
 import (
 	"context"
 
-	api "github.com/containerd/containerd/api/services/leases/v1"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/leases"
-	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/protobuf"
-	ptypes "github.com/containerd/containerd/protobuf/types"
+	api "github.com/containerd/containerd/v2/api/services/leases/v1"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/leases"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/containerd/v2/protobuf"
+	ptypes "github.com/containerd/containerd/v2/protobuf/types"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 	"google.golang.org/grpc"
 )
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.GRPCPlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.GRPCPlugin,
 		ID:   "leases",
 		Requires: []plugin.Type{
-			plugin.LeasePlugin,
+			plugins.LeasePlugin,
 		},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			i, err := ic.GetByID(plugin.LeasePlugin, "manager")
+			i, err := ic.GetByID(plugins.LeasePlugin, "manager")
 			if err != nil {
 				return nil, err
 			}

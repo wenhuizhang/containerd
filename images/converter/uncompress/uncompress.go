@@ -21,12 +21,12 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/containerd/containerd/archive/compression"
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/images/converter"
-	"github.com/containerd/containerd/labels"
+	"github.com/containerd/containerd/v2/archive/compression"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/images/converter"
+	"github.com/containerd/containerd/v2/labels"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -99,7 +99,7 @@ func IsUncompressedType(mt string) bool {
 		images.MediaTypeDockerSchema2Layer,
 		images.MediaTypeDockerSchema2LayerForeign,
 		ocispec.MediaTypeImageLayer,
-		ocispec.MediaTypeImageLayerNonDistributable:
+		ocispec.MediaTypeImageLayerNonDistributable: //nolint:staticcheck // deprecated
 		return true
 	default:
 		return false
@@ -114,8 +114,8 @@ func convertMediaType(mt string) string {
 		return images.MediaTypeDockerSchema2LayerForeign
 	case ocispec.MediaTypeImageLayerGzip, ocispec.MediaTypeImageLayerZstd:
 		return ocispec.MediaTypeImageLayer
-	case ocispec.MediaTypeImageLayerNonDistributableGzip, ocispec.MediaTypeImageLayerNonDistributableZstd:
-		return ocispec.MediaTypeImageLayerNonDistributable
+	case ocispec.MediaTypeImageLayerNonDistributableGzip, ocispec.MediaTypeImageLayerNonDistributableZstd: //nolint:staticcheck // deprecated
+		return ocispec.MediaTypeImageLayerNonDistributable //nolint:staticcheck // deprecated
 	default:
 		return mt
 	}

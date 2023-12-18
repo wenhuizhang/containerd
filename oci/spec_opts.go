@@ -28,15 +28,17 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/containerd/containerd/containers"
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/mount"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/platforms"
+	"github.com/container-orchestrated-devices/container-device-interface/pkg/cdi"
+	"github.com/containerd/containerd/v2/containers"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/mount"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/containerd/v2/platforms"
 	"github.com/containerd/continuity/fs"
+	"github.com/containerd/log"
+	"github.com/moby/sys/user"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/opencontainers/runc/libcontainer/user"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -121,6 +123,17 @@ func setCapabilities(s *Spec) {
 	}
 }
 
+// ensureAdditionalGids ensures that the primary GID is also included in the additional GID list.
+func ensureAdditionalGids(s *Spec) {
+	setProcess(s)
+	for _, f := range s.Process.User.AdditionalGids {
+		if f == s.Process.User.GID {
+			return
+		}
+	}
+	s.Process.User.AdditionalGids = append([]uint32{s.Process.User.GID}, s.Process.User.AdditionalGids...)
+}
+
 // WithDefaultSpec returns a SpecOpts that will populate the spec with default
 // values.
 //
@@ -172,13 +185,6 @@ func WithEnv(environmentVariables []string) SpecOpts {
 		}
 		return nil
 	}
-}
-
-// WithDefaultPathEnv sets the $PATH environment variable to the
-// default PATH defined in this package.
-func WithDefaultPathEnv(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
-	s.Process.Env = replaceOrAppendEnvValues(s.Process.Env, defaultUnixEnv)
-	return nil
 }
 
 // replaceOrAppendEnvValues returns the defaults with the overrides either
@@ -363,26 +369,24 @@ func WithImageConfigArgs(image Image, args []string) SpecOpts {
 		if err != nil {
 			return err
 		}
+		if !images.IsConfigType(ic.MediaType) {
+			return fmt.Errorf("unknown image config media type %s", ic.MediaType)
+		}
+
 		var (
 			imageConfigBytes []byte
 			ociimage         v1.Image
 			config           v1.ImageConfig
 		)
-		switch ic.MediaType {
-		case v1.MediaTypeImageConfig, images.MediaTypeDockerSchema2Config:
-			var err error
-			imageConfigBytes, err = content.ReadBlob(ctx, image.ContentStore(), ic)
-			if err != nil {
-				return err
-			}
-
-			if err := json.Unmarshal(imageConfigBytes, &ociimage); err != nil {
-				return err
-			}
-			config = ociimage.Config
-		default:
-			return fmt.Errorf("unknown image config media type %s", ic.MediaType)
+		imageConfigBytes, err = content.ReadBlob(ctx, image.ContentStore(), ic)
+		if err != nil {
+			return err
 		}
+
+		if err = json.Unmarshal(imageConfigBytes, &ociimage); err != nil {
+			return err
+		}
+		config = ociimage.Config
 
 		appendOSMounts(s, ociimage.OS)
 		setProcess(s)
@@ -407,7 +411,7 @@ func WithImageConfigArgs(image Image, args []string) SpecOpts {
 				if err := WithUser(config.User)(ctx, client, c, s); err != nil {
 					return err
 				}
-				return WithAdditionalGIDs(fmt.Sprintf("%d", s.Process.User.UID))(ctx, client, c, s)
+				return WithAdditionalGIDs(strconv.FormatInt(int64(s.Process.User.UID), 10))(ctx, client, c, s)
 			}
 			// we should query the image's /etc/group for additional GIDs
 			// even if there is no specified user in the image config
@@ -453,6 +457,7 @@ func WithImageConfigArgs(image Image, args []string) SpecOpts {
 				return errors.New("no arguments specified")
 			}
 
+			//nolint:staticcheck // ArgsEscaped is deprecated
 			if config.ArgsEscaped && (len(config.Entrypoint) > 0 || cmdFromImage) {
 				s.Process.Args = nil
 				s.Process.CommandLine = cmd[0]
@@ -586,7 +591,9 @@ func WithNamespacedCgroup() SpecOpts {
 //	user, uid, user:group, uid:gid, uid:group, user:gid
 func WithUser(userstr string) SpecOpts {
 	return func(ctx context.Context, client Client, c *containers.Container, s *Spec) error {
+		defer ensureAdditionalGids(s)
 		setProcess(s)
+		s.Process.User.AdditionalGids = nil
 
 		// For LCOW it's a bit harder to confirm that the user actually exists on the host as a rootfs isn't
 		// mounted on the host and shared into the guest, but rather the rootfs is constructed entirely in the
@@ -594,7 +601,9 @@ func WithUser(userstr string) SpecOpts {
 		// The `Username` field on the runtime spec is marked by Platform as only for Windows, and in this case it
 		// *is* being set on a Windows host at least, but will be used as a temporary holding spot until the guest
 		// can use the string to perform these same operations to grab the uid:gid inside.
-		if s.Windows != nil && s.Linux != nil {
+		//
+		// Mounts are not supported on Darwin, so using the same workaround.
+		if (s.Windows != nil && s.Linux != nil) || runtime.GOOS == "darwin" {
 			s.Process.User.Username = userstr
 			return nil
 		}
@@ -668,8 +677,11 @@ func WithUser(userstr string) SpecOpts {
 				return err
 			}
 
-			mounts = tryReadonlyMounts(mounts)
-			return mount.WithTempMount(ctx, mounts, f)
+			// Use a read-only mount when trying to get user/group information
+			// from the container's rootfs. Since the option does read operation
+			// only, we append ReadOnly mount option to prevent the Linux kernel
+			// from syncing whole filesystem in umount syscall.
+			return mount.WithReadonlyTempMount(ctx, mounts, f)
 		default:
 			return fmt.Errorf("invalid USER value %s", userstr)
 		}
@@ -679,7 +691,9 @@ func WithUser(userstr string) SpecOpts {
 // WithUIDGID allows the UID and GID for the Process to be set
 func WithUIDGID(uid, gid uint32) SpecOpts {
 	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
+		defer ensureAdditionalGids(s)
 		setProcess(s)
+		s.Process.User.AdditionalGids = nil
 		s.Process.User.UID = uid
 		s.Process.User.GID = gid
 		return nil
@@ -692,7 +706,9 @@ func WithUIDGID(uid, gid uint32) SpecOpts {
 // additionally sets the gid to 0, and does not return an error.
 func WithUserID(uid uint32) SpecOpts {
 	return func(ctx context.Context, client Client, c *containers.Container, s *Spec) (err error) {
+		defer ensureAdditionalGids(s)
 		setProcess(s)
+		s.Process.User.AdditionalGids = nil
 		setUser := func(root string) error {
 			user, err := UserFromPath(root, func(u user.User) bool {
 				return u.Uid == int(uid)
@@ -725,8 +741,11 @@ func WithUserID(uid uint32) SpecOpts {
 			return err
 		}
 
-		mounts = tryReadonlyMounts(mounts)
-		return mount.WithTempMount(ctx, mounts, setUser)
+		// Use a read-only mount when trying to get user/group information
+		// from the container's rootfs. Since the option does read operation
+		// only, we append ReadOnly mount option to prevent the Linux kernel
+		// from syncing whole filesystem in umount syscall.
+		return mount.WithReadonlyTempMount(ctx, mounts, setUser)
 	}
 }
 
@@ -738,7 +757,9 @@ func WithUserID(uid uint32) SpecOpts {
 // the container.
 func WithUsername(username string) SpecOpts {
 	return func(ctx context.Context, client Client, c *containers.Container, s *Spec) (err error) {
+		defer ensureAdditionalGids(s)
 		setProcess(s)
+		s.Process.User.AdditionalGids = nil
 		if s.Linux != nil {
 			setUser := func(root string) error {
 				user, err := UserFromPath(root, func(u user.User) bool {
@@ -768,8 +789,11 @@ func WithUsername(username string) SpecOpts {
 				return err
 			}
 
-			mounts = tryReadonlyMounts(mounts)
-			return mount.WithTempMount(ctx, mounts, setUser)
+			// Use a read-only mount when trying to get user/group information
+			// from the container's rootfs. Since the option does read operation
+			// only, we append ReadOnly mount option to prevent the Linux kernel
+			// from syncing whole filesystem in umount syscall.
+			return mount.WithReadonlyTempMount(ctx, mounts, setUser)
 		} else if s.Windows != nil {
 			s.Process.User.Username = username
 		} else {
@@ -789,7 +813,9 @@ func WithAdditionalGIDs(userstr string) SpecOpts {
 			return nil
 		}
 		setProcess(s)
+		s.Process.User.AdditionalGids = nil
 		setAdditionalGids := func(root string) error {
+			defer ensureAdditionalGids(s)
 			var username string
 			uid, err := strconv.Atoi(userstr)
 			if err == nil {
@@ -845,8 +871,11 @@ func WithAdditionalGIDs(userstr string) SpecOpts {
 			return err
 		}
 
-		mounts = tryReadonlyMounts(mounts)
-		return mount.WithTempMount(ctx, mounts, setAdditionalGids)
+		// Use a read-only mount when trying to get user/group information
+		// from the container's rootfs. Since the option does read operation
+		// only, we append ReadOnly mount option to prevent the Linux kernel
+		// from syncing whole filesystem in umount syscall.
+		return mount.WithReadonlyTempMount(ctx, mounts, setAdditionalGids)
 	}
 }
 
@@ -860,13 +889,14 @@ func WithAppendAdditionalGroups(groups ...string) SpecOpts {
 		}
 		setProcess(s)
 		setAdditionalGids := func(root string) error {
+			defer ensureAdditionalGids(s)
 			gpath, err := fs.RootPath(root, "/etc/group")
 			if err != nil {
 				return err
 			}
-			ugroups, err := user.ParseGroupFile(gpath)
-			if err != nil {
-				return err
+			ugroups, groupErr := user.ParseGroupFile(gpath)
+			if groupErr != nil && !os.IsNotExist(groupErr) {
+				return groupErr
 			}
 			groupMap := make(map[string]user.Group)
 			for _, group := range ugroups {
@@ -880,6 +910,9 @@ func WithAppendAdditionalGroups(groups ...string) SpecOpts {
 				} else {
 					g, ok := groupMap[group]
 					if !ok {
+						if groupErr != nil {
+							return fmt.Errorf("unable to find group %s: %w", group, groupErr)
+						}
 						return fmt.Errorf("unable to find group %s", group)
 					}
 					gids = append(gids, uint32(g.Gid))
@@ -906,8 +939,11 @@ func WithAppendAdditionalGroups(groups ...string) SpecOpts {
 			return err
 		}
 
-		mounts = tryReadonlyMounts(mounts)
-		return mount.WithTempMount(ctx, mounts, setAdditionalGids)
+		// Use a read-only mount when trying to get user/group information
+		// from the container's rootfs. Since the option does read operation
+		// only, we append ReadOnly mount option to prevent the Linux kernel
+		// from syncing whole filesystem in umount syscall.
+		return mount.WithReadonlyTempMount(ctx, mounts, setAdditionalGids)
 	}
 }
 
@@ -919,6 +955,11 @@ func WithCapabilities(caps []string) SpecOpts {
 		s.Process.Capabilities.Bounding = caps
 		s.Process.Capabilities.Effective = caps
 		s.Process.Capabilities.Permitted = caps
+		if len(caps) == 0 {
+			s.Process.Capabilities.Inheritable = nil
+		} else if len(s.Process.Capabilities.Inheritable) > 0 {
+			filterCaps(&s.Process.Capabilities.Inheritable, caps)
+		}
 
 		return nil
 	}
@@ -940,6 +981,16 @@ func removeCap(caps *[]string, s string) {
 			continue
 		}
 		newcaps = append(newcaps, c)
+	}
+	*caps = newcaps
+}
+
+func filterCaps(caps *[]string, filters []string) {
+	var newcaps []string
+	for _, c := range *caps {
+		if capsContain(filters, c) {
+			newcaps = append(newcaps, c)
+		}
 	}
 	*caps = newcaps
 }
@@ -972,6 +1023,7 @@ func WithDroppedCapabilities(caps []string) SpecOpts {
 				&s.Process.Capabilities.Bounding,
 				&s.Process.Capabilities.Effective,
 				&s.Process.Capabilities.Permitted,
+				&s.Process.Capabilities.Inheritable,
 			} {
 				removeCap(cl, c)
 			}
@@ -1402,24 +1454,6 @@ func WithDevShmSize(kb int64) SpecOpts {
 	}
 }
 
-// tryReadonlyMounts is used by the options which are trying to get user/group
-// information from container's rootfs. Since the option does read operation
-// only, this helper will append ReadOnly mount option to prevent linux kernel
-// from syncing whole filesystem in umount syscall.
-//
-// TODO(fuweid):
-//
-// Currently, it only works for overlayfs. I think we can apply it to other
-// kinds of filesystem. Maybe we can return `ro` option by `snapshotter.Mount`
-// API, when the caller passes that experimental annotation
-// `containerd.io/snapshot/readonly.mount` something like that.
-func tryReadonlyMounts(mounts []mount.Mount) []mount.Mount {
-	if len(mounts) == 1 && mounts[0].Type == "overlay" {
-		mounts[0].Options = append(mounts[0].Options, "ro")
-	}
-	return mounts
-}
-
 // WithWindowsDevice adds a device exposed to a Windows (WCOW or LCOW) Container
 func WithWindowsDevice(idType, id string) SpecOpts {
 	return func(_ context.Context, _ Client, _ *containers.Container, s *Spec) error {
@@ -1500,6 +1534,15 @@ func WithCPUCFS(quota int64, period uint64) SpecOpts {
 		setCPU(s)
 		s.Linux.Resources.CPU.Quota = &quota
 		s.Linux.Resources.CPU.Period = &period
+		return nil
+	}
+}
+
+// WithCPUBurst sets the container's cpu burst
+func WithCPUBurst(burst uint64) SpecOpts {
+	return func(ctx context.Context, _ Client, c *containers.Container, s *Spec) error {
+		setCPU(s)
+		s.Linux.Resources.CPU.Burst = &burst
 		return nil
 	}
 }
@@ -1597,6 +1640,35 @@ func WithWindowsNetworkNamespace(ns string) SpecOpts {
 			s.Windows.Network = &specs.WindowsNetwork{}
 		}
 		s.Windows.Network.NetworkNamespace = ns
+		return nil
+	}
+}
+
+// WithCDIDevices injects the requested CDI devices into the OCI specification.
+func WithCDIDevices(devices ...string) SpecOpts {
+	return func(ctx context.Context, _ Client, c *containers.Container, s *Spec) error {
+		if len(devices) == 0 {
+			return nil
+		}
+
+		registry := cdi.GetRegistry()
+		if err := registry.Refresh(); err != nil {
+			// We don't consider registry refresh failure a fatal error.
+			// For instance, a dynamically generated invalid CDI Spec file for
+			// any particular vendor shouldn't prevent injection of devices of
+			// different vendors. CDI itself knows better and it will fail the
+			// injection if necessary.
+			log.G(ctx).Warnf("CDI registry refresh failed: %v", err)
+		}
+
+		if _, err := registry.InjectDevices(s, devices...); err != nil {
+			return fmt.Errorf("CDI device injection failed: %w", err)
+		}
+
+		// One crucial thing to keep in mind is that CDI device injection
+		// might add OCI Spec environment variables, hooks, and mounts as
+		// well. Therefore it is important that none of the corresponding
+		// OCI Spec fields are reset up in the call stack once we return.
 		return nil
 	}
 }

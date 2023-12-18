@@ -23,9 +23,11 @@ import (
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
-	"github.com/containerd/containerd/platforms"
-	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/snapshots/btrfs"
+	"github.com/containerd/containerd/v2/platforms"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/containerd/v2/snapshots/btrfs"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 )
 
 // Config represents configuration for the btrfs plugin.
@@ -35,9 +37,9 @@ type Config struct {
 }
 
 func init() {
-	plugin.Register(&plugin.Registration{
+	registry.Register(&plugin.Registration{
 		ID:     "btrfs",
-		Type:   plugin.SnapshotPlugin,
+		Type:   plugins.SnapshotPlugin,
 		Config: &Config{},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
 			ic.Meta.Platforms = []ocispec.Platform{platforms.DefaultSpec()}
@@ -47,7 +49,7 @@ func init() {
 				return nil, errors.New("invalid btrfs configuration")
 			}
 
-			root := ic.Root
+			root := ic.Properties[plugins.PropertyRootDir]
 			if len(config.RootPath) != 0 {
 				root = config.RootPath
 			}

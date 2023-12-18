@@ -22,8 +22,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/containerd/containerd/pkg/streaming"
-	"github.com/containerd/typeurl"
+	"github.com/containerd/containerd/v2/pkg/streaming"
+	"github.com/containerd/typeurl/v2"
 )
 
 func FuzzSendAndReceive(f *testing.F) {

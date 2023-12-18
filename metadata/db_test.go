@@ -29,18 +29,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/containerd/containerd/containers"
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/content/local"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/gc"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/leases"
-	"github.com/containerd/containerd/log/logtest"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/protobuf/types"
-	"github.com/containerd/containerd/snapshots"
-	"github.com/containerd/containerd/snapshots/native"
+	"github.com/containerd/containerd/v2/containers"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/content/local"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/gc"
+	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/leases"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/containerd/v2/protobuf/types"
+	"github.com/containerd/containerd/v2/snapshots"
+	"github.com/containerd/containerd/v2/snapshots/native"
+	"github.com/containerd/log/logtest"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/assert"
@@ -654,6 +654,13 @@ func create(obj object, tx *bolt.Tx, db *DB, cs content.Store, sn snapshots.Snap
 		_, err := NewImageStore(db).Create(ctx, image)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create image: %w", err)
+		}
+		if !obj.removed {
+			node = &gc.Node{
+				Type:      ResourceImage,
+				Namespace: namespace,
+				Key:       image.Name,
+			}
 		}
 	case testContainer:
 		container := containers.Container{

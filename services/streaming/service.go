@@ -20,26 +20,37 @@ import (
 	"errors"
 	"io"
 
-	api "github.com/containerd/containerd/api/services/streaming/v1"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/pkg/streaming"
-	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/protobuf"
-	ptypes "github.com/containerd/containerd/protobuf/types"
-	"github.com/containerd/typeurl"
+	api "github.com/containerd/containerd/v2/api/services/streaming/v1"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/pkg/streaming"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/containerd/v2/protobuf"
+	ptypes "github.com/containerd/containerd/v2/protobuf/types"
+	"github.com/containerd/log"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
+	"github.com/containerd/typeurl/v2"
 	"google.golang.org/grpc"
 )
 
+var emptyResponse typeurl.Any
+
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.GRPCPlugin,
+	// save marshalled empty response to avoid marshaling everytime
+	var err error
+	emptyResponse, err = typeurl.MarshalAny(&ptypes.Empty{})
+	if err != nil {
+		panic(err)
+	}
+
+	registry.Register(&plugin.Registration{
+		Type: plugins.GRPCPlugin,
 		ID:   "streaming",
 		Requires: []plugin.Type{
-			plugin.StreamingPlugin,
+			plugins.StreamingPlugin,
 		},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			i, err := ic.GetByID(plugin.StreamingPlugin, "manager")
+			i, err := ic.GetByID(plugins.StreamingPlugin, "manager")
 			if err != nil {
 				return nil, err
 			}
@@ -69,12 +80,6 @@ func (s *service) Stream(srv api.Streaming_StreamServer) error {
 		return err
 	}
 
-	// TODO: Save this response to avoid marshaling everytime
-	response, err := typeurl.MarshalAny(&ptypes.Empty{})
-	if err != nil {
-		return err
-	}
-
 	cc := make(chan struct{})
 	ss := &serviceStream{
 		s:  srv,
@@ -87,7 +92,7 @@ func (s *service) Stream(srv api.Streaming_StreamServer) error {
 	}
 
 	// Send response packet after registering stream
-	if err := srv.Send(protobuf.FromAny(response)); err != nil {
+	if err := srv.Send(protobuf.FromAny(emptyResponse)); err != nil {
 		return err
 	}
 

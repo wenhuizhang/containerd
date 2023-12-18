@@ -26,17 +26,18 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/cmd/ctr/commands"
-	"github.com/containerd/containerd/cmd/ctr/commands/content"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/pkg/progress"
-	"github.com/containerd/containerd/pkg/transfer"
-	"github.com/containerd/containerd/pkg/transfer/image"
-	"github.com/containerd/containerd/platforms"
-	"github.com/containerd/containerd/remotes"
-	"github.com/containerd/containerd/remotes/docker"
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/cmd/ctr/commands"
+	"github.com/containerd/containerd/v2/cmd/ctr/commands/content"
+	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/pkg/progress"
+	"github.com/containerd/containerd/v2/pkg/transfer"
+	"github.com/containerd/containerd/v2/pkg/transfer/image"
+	"github.com/containerd/containerd/v2/pkg/transfer/registry"
+	"github.com/containerd/containerd/v2/platforms"
+	"github.com/containerd/containerd/v2/remotes"
+	"github.com/containerd/containerd/v2/remotes/docker"
+	"github.com/containerd/log"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/urfave/cli"
@@ -45,7 +46,7 @@ import (
 
 var pushCommand = cli.Command{
 	Name:      "push",
-	Usage:     "push an image to a remote",
+	Usage:     "Push an image to a remote",
 	ArgsUsage: "[flags] <remote> [<local>]",
 	Description: `Pushes an image reference from containerd.
 
@@ -58,24 +59,24 @@ var pushCommand = cli.Command{
 `,
 	Flags: append(commands.RegistryFlags, cli.StringFlag{
 		Name:  "manifest",
-		Usage: "digest of manifest",
+		Usage: "Digest of manifest",
 	}, cli.StringFlag{
 		Name:  "manifest-type",
-		Usage: "media type of manifest digest",
+		Usage: "Media type of manifest digest",
 		Value: ocispec.MediaTypeImageManifest,
 	}, cli.StringSliceFlag{
 		Name:  "platform",
-		Usage: "push content from a specific platform",
+		Usage: "Push content from a specific platform",
 		Value: &cli.StringSlice{},
 	}, cli.IntFlag{
 		Name:  "max-concurrent-uploaded-layers",
-		Usage: "set the max concurrent uploaded layers for each push",
+		Usage: "Set the max concurrent uploaded layers for each push",
 	}, cli.BoolTFlag{
 		Name:  "local",
-		Usage: "push content from local client rather than using transfer service",
+		Usage: "Push content from local client rather than using transfer service",
 	}, cli.BoolFlag{
 		Name:  "allow-non-distributable-blobs",
-		Usage: "allow pushing blobs that are marked as non-distributable",
+		Usage: "Allow pushing blobs that are marked as non-distributable",
 	}),
 	Action: func(context *cli.Context) error {
 		var (
@@ -103,7 +104,7 @@ var pushCommand = cli.Command{
 			if local == "" {
 				local = ref
 			}
-			reg := image.NewOCIRegistry(ref, nil, ch)
+			reg := registry.NewOCIRegistry(ref, nil, ch)
 			is := image.NewStore(local)
 
 			pf, done := ProgressHandler(ctx, os.Stdout)

@@ -25,13 +25,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/filters"
-	"github.com/containerd/containerd/labels"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/metadata/boltutil"
-	"github.com/containerd/containerd/namespaces"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/filters"
+	"github.com/containerd/containerd/v2/labels"
+	"github.com/containerd/containerd/v2/metadata/boltutil"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/log"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	bolt "go.etcd.io/bbolt"
@@ -719,15 +719,8 @@ func isSharedContent(tx *bolt.Tx, dgst digest.Digest) bool {
 		if lbkt == nil {
 			continue
 		}
-		// iterate through each label
-		lbc := lbkt.Cursor()
-		for k, v := lbc.First(); k != nil; k, v = lbc.Next() {
-			if string(k) == labels.LabelSharedNamespace {
-				if string(v) == "true" && getBlobBucket(tx, ns, dgst) != nil {
-					return true
-				}
-				break
-			}
+		if sharedNS := lbkt.Get([]byte(labels.LabelSharedNamespace)); sharedNS != nil && string(sharedNS) == "true" && getBlobBucket(tx, ns, dgst) != nil {
+			return true
 		}
 	}
 	return false

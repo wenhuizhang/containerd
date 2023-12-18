@@ -24,19 +24,15 @@ import (
 	"os"
 	"path/filepath"
 	gruntime "runtime"
-	"strings"
 
-	"github.com/containerd/ttrpc"
-	"github.com/sirupsen/logrus"
-
-	"github.com/containerd/containerd/api/runtime/task/v2"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/protobuf"
-	"github.com/containerd/containerd/protobuf/proto"
-	"github.com/containerd/containerd/protobuf/types"
-	"github.com/containerd/containerd/runtime"
-	client "github.com/containerd/containerd/runtime/v2/shim"
+	"github.com/containerd/containerd/v2/api/runtime/task/v2"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/containerd/v2/protobuf"
+	"github.com/containerd/containerd/v2/protobuf/proto"
+	"github.com/containerd/containerd/v2/protobuf/types"
+	"github.com/containerd/containerd/v2/runtime"
+	client "github.com/containerd/containerd/v2/runtime/v2/shim"
+	"github.com/containerd/log"
 )
 
 type shimBinaryConfig struct {
@@ -66,8 +62,8 @@ type binary struct {
 
 func (b *binary) Start(ctx context.Context, opts *types.Any, onClose func()) (_ *shim, err error) {
 	args := []string{"-id", b.bundle.ID}
-	switch logrus.GetLevel() {
-	case logrus.DebugLevel, logrus.TraceLevel:
+	switch log.GetLevel() {
+	case log.DebugLevel, log.TraceLevel:
 		args = append(args, "-debug")
 	}
 	args = append(args, "start")
@@ -121,11 +117,8 @@ func (b *binary) Start(ctx context.Context, opts *types.Any, onClose func()) (_ 
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", out, err)
 	}
-	address := strings.TrimSpace(string(out))
-	conn, err := client.Connect(address, client.AnonDialer)
-	if err != nil {
-		return nil, err
-	}
+	response := bytes.TrimSpace(out)
+
 	onCloseWithShimLog := func() {
 		onClose()
 		cancelShimLog()
@@ -135,10 +128,26 @@ func (b *binary) Start(ctx context.Context, opts *types.Any, onClose func()) (_ 
 	if err := os.WriteFile(filepath.Join(b.bundle.Path, "shim-binary-path"), []byte(b.runtime), 0600); err != nil {
 		return nil, err
 	}
-	client := ttrpc.NewClient(conn, ttrpc.WithOnClose(onCloseWithShimLog))
+
+	params, err := parseStartResponse(response)
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := makeConnection(ctx, b.bundle.ID, params, onCloseWithShimLog)
+	if err != nil {
+		return nil, err
+	}
+
+	// Save bootstrap configuration (so containerd can restore shims after restart).
+	if err := writeBootstrapParams(filepath.Join(b.bundle.Path, "bootstrap.json"), params); err != nil {
+		return nil, fmt.Errorf("failed to write bootstrap.json: %w", err)
+	}
+
 	return &shim{
-		bundle: b.bundle,
-		client: client,
+		bundle:  b.bundle,
+		client:  conn,
+		version: params.Version,
 	}, nil
 }
 
@@ -146,7 +155,7 @@ func (b *binary) Delete(ctx context.Context) (*runtime.Exit, error) {
 	log.G(ctx).Info("cleaning up dead shim")
 
 	// On Windows and FreeBSD, the current working directory of the shim should
-	// not be the bundle path during the delete operation.  Instead, we invoke
+	// not be the bundle path during the delete operation. Instead, we invoke
 	// with the default work dir and forward the bundle path on the cmdline.
 	// Windows cannot delete the current working directory while an executable
 	// is in use with it. On FreeBSD, fork/exec can fail.
@@ -158,8 +167,8 @@ func (b *binary) Delete(ctx context.Context) (*runtime.Exit, error) {
 		"-id", b.bundle.ID,
 		"-bundle", b.bundle.Path,
 	}
-	switch logrus.GetLevel() {
-	case logrus.DebugLevel, logrus.TraceLevel:
+	switch log.GetLevel() {
+	case log.DebugLevel, log.TraceLevel:
 		args = append(args, "-debug")
 	}
 	args = append(args, "delete")

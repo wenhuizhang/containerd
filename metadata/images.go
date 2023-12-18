@@ -25,13 +25,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/filters"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/labels"
-	"github.com/containerd/containerd/metadata/boltutil"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/pkg/epoch"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/filters"
+	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/labels"
+	"github.com/containerd/containerd/v2/metadata/boltutil"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/containerd/v2/pkg/epoch"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	bolt "go.etcd.io/bbolt"
@@ -136,6 +136,10 @@ func (s *imageStore) Create(ctx context.Context, image images.Image) (images.Ima
 			return err
 		}
 
+		if err := addImageLease(ctx, tx, image.Name, image.Labels); err != nil {
+			return err
+		}
+
 		ibkt, err := bkt.CreateBucket([]byte(image.Name))
 		if err != nil {
 			if err != bolt.ErrBucketExists {
@@ -145,6 +149,10 @@ func (s *imageStore) Create(ctx context.Context, image images.Image) (images.Ima
 			return fmt.Errorf("image %q: %w", image.Name, errdefs.ErrAlreadyExists)
 		}
 
+		// The value of `image.CreatedAt` passed from the caller is discarded here.
+		// Ideally we should return an error when the value is already set.
+		// However, as `image.CreatedAt` is defined as a non-pointer `time.Time`, we can't compare it to nil.
+		// And we can't compare it to `time.Time{}` either, as `time.Time{}` is a proper timestamp (1970-01-01 00:00:00).
 		if tm := epoch.FromContext(ctx); tm != nil {
 			image.CreatedAt = tm.UTC()
 		} else {
@@ -232,6 +240,11 @@ func (s *imageStore) Update(ctx context.Context, image images.Image, fieldpaths 
 			return err
 		}
 
+		// Collectible label may be added, if so add to lease
+		if err := addImageLease(ctx, tx, updated.Name, updated.Labels); err != nil {
+			return err
+		}
+
 		updated.CreatedAt = createdat
 		if tm := epoch.FromContext(ctx); tm != nil {
 			updated.UpdatedAt = tm.UTC()
@@ -253,10 +266,37 @@ func (s *imageStore) Delete(ctx context.Context, name string, opts ...images.Del
 		return err
 	}
 
+	var options images.DeleteOptions
+	for _, opt := range opts {
+		if err := opt(ctx, &options); err != nil {
+			return err
+		}
+	}
+
 	return update(ctx, s.db, func(tx *bolt.Tx) error {
 		bkt := getImagesBucket(tx, namespace)
 		if bkt == nil {
 			return fmt.Errorf("image %q: %w", name, errdefs.ErrNotFound)
+		}
+
+		if err := removeImageLease(ctx, tx, name); err != nil {
+			return err
+		}
+
+		if options.Target != nil && options.Target.Digest != "" {
+			ibkt := bkt.Bucket([]byte(name))
+			if ibkt == nil {
+				return fmt.Errorf("image %q: %w", name, errdefs.ErrNotFound)
+			}
+
+			var check images.Image
+			if err := readImage(&check, ibkt); err != nil {
+				return fmt.Errorf("image %q: %w", name, err)
+			}
+
+			if check.Target.Digest != options.Target.Digest {
+				return fmt.Errorf("image %q has target %v, not %v: %w", name, check.Target.Digest, options.Target.Digest, errdefs.ErrNotFound)
+			}
 		}
 
 		if err = bkt.DeleteBucket([]byte(name)); err != nil {

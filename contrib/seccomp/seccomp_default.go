@@ -23,7 +23,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/containerd/containerd/contrib/seccomp/kernelversion"
+	"github.com/containerd/containerd/v2/contrib/seccomp/kernelversion"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -183,9 +183,6 @@ func DefaultProfile(sp *specs.Spec) *specs.LinuxSeccomp {
 				"ioprio_set",
 				"io_setup",
 				"io_submit",
-				"io_uring_enter",
-				"io_uring_register",
-				"io_uring_setup",
 				"ipc",
 				"kill",
 				"landlock_add_rule",
@@ -237,6 +234,7 @@ func DefaultProfile(sp *specs.Spec) *specs.LinuxSeccomp {
 				"munlock",
 				"munlockall",
 				"munmap",
+				"name_to_handle_at",
 				"nanosleep",
 				"newfstatat",
 				"_newselect",
@@ -585,7 +583,6 @@ func DefaultProfile(sp *specs.Spec) *specs.LinuxSeccomp {
 					"mount",
 					"mount_setattr",
 					"move_mount",
-					"name_to_handle_at",
 					"open_tree",
 					"perf_event_open",
 					"quotactl",

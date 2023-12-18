@@ -19,26 +19,28 @@ package plugin
 import (
 	"context"
 
-	"github.com/containerd/containerd/gc"
-	"github.com/containerd/containerd/leases"
-	"github.com/containerd/containerd/metadata"
-	"github.com/containerd/containerd/plugin"
+	"github.com/containerd/containerd/v2/gc"
+	"github.com/containerd/containerd/v2/leases"
+	"github.com/containerd/containerd/v2/metadata"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 )
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.LeasePlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.LeasePlugin,
 		ID:   "manager",
 		Requires: []plugin.Type{
-			plugin.MetadataPlugin,
-			plugin.GCPlugin,
+			plugins.MetadataPlugin,
+			plugins.GCPlugin,
 		},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			m, err := ic.Get(plugin.MetadataPlugin)
+			m, err := ic.GetSingle(plugins.MetadataPlugin)
 			if err != nil {
 				return nil, err
 			}
-			g, err := ic.Get(plugin.GCPlugin)
+			g, err := ic.GetSingle(plugins.GCPlugin)
 			if err != nil {
 				return nil, err
 			}

@@ -18,14 +18,21 @@ package image
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/pkg/cri/util"
-	"github.com/containerd/containerd/reference/docker"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/images/usage"
+	"github.com/containerd/containerd/v2/pkg/cri/labels"
+	"github.com/containerd/containerd/v2/pkg/cri/util"
+	"github.com/containerd/containerd/v2/platforms"
+	docker "github.com/distribution/reference"
+	"k8s.io/apimachinery/pkg/util/sets"
 
+	"github.com/opencontainers/go-digest"
 	imagedigest "github.com/opencontainers/go-digest"
 	"github.com/opencontainers/go-digest/digestset"
 	imageidentity "github.com/opencontainers/image-spec/identity"
@@ -45,6 +52,14 @@ type Image struct {
 	Size int64
 	// ImageSpec is the oci image structure which describes basic information about the image.
 	ImageSpec imagespec.Image
+	// Pinned image to prevent it from garbage collection
+	Pinned bool
+}
+
+// InfoProvider provides both content and info about content
+type InfoProvider interface {
+	content.Provider
+	Info(ctx context.Context, dgst digest.Digest) (content.Info, error)
 }
 
 // Store stores all images.
@@ -52,20 +67,32 @@ type Store struct {
 	lock sync.RWMutex
 	// refCache is a containerd image reference to image id cache.
 	refCache map[string]string
-	// client is the containerd client.
-	client *containerd.Client
+
+	// images is the local image store
+	images images.Store
+
+	// content provider
+	provider InfoProvider
+
+	// platform represents the currently supported platform for images
+	// TODO: Make this store multi-platform
+	platform platforms.MatchComparer
+
 	// store is the internal image store indexed by image id.
 	store *store
 }
 
 // NewStore creates an image store.
-func NewStore(client *containerd.Client) *Store {
+func NewStore(img images.Store, provider InfoProvider, platform platforms.MatchComparer) *Store {
 	return &Store{
 		refCache: make(map[string]string),
-		client:   client,
+		images:   img,
+		provider: provider,
+		platform: platform,
 		store: &store{
-			images:    make(map[string]Image),
-			digestSet: digestset.NewSet(),
+			images:     make(map[string]Image),
+			digestSet:  digestset.NewSet(),
+			pinnedRefs: make(map[string]sets.Set[string]),
 		},
 	}
 }
@@ -74,13 +101,15 @@ func NewStore(client *containerd.Client) *Store {
 func (s *Store) Update(ctx context.Context, ref string) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	i, err := s.client.GetImage(ctx, ref)
+
+	i, err := s.images.Get(ctx, ref)
 	if err != nil && !errdefs.IsNotFound(err) {
 		return fmt.Errorf("get image from containerd: %w", err)
 	}
+
 	var img *Image
 	if err == nil {
-		img, err = getImage(ctx, i)
+		img, err = s.getImage(ctx, i)
 		if err != nil {
 			return fmt.Errorf("get image info from containerd: %w", err)
 		}
@@ -103,7 +132,13 @@ func (s *Store) update(ref string, img *Image) error {
 	}
 	if oldExist {
 		if oldID == img.ID {
-			return nil
+			if s.store.isPinned(img.ID, ref) == img.Pinned {
+				return nil
+			}
+			if img.Pinned {
+				return s.store.pin(img.ID, ref)
+			}
+			return s.store.unpin(img.ID, ref)
 		}
 		// Updated. Remove tag from old image.
 		s.store.delete(oldID, ref)
@@ -113,39 +148,46 @@ func (s *Store) update(ref string, img *Image) error {
 	return s.store.add(*img)
 }
 
-// getImage gets image information from containerd.
-func getImage(ctx context.Context, i containerd.Image) (*Image, error) {
-	// Get image information.
-	diffIDs, err := i.RootFS(ctx)
+// getImage gets image information from containerd for current platform.
+func (s *Store) getImage(ctx context.Context, i images.Image) (*Image, error) {
+	diffIDs, err := i.RootFS(ctx, s.provider, s.platform)
 	if err != nil {
 		return nil, fmt.Errorf("get image diffIDs: %w", err)
 	}
 	chainID := imageidentity.ChainID(diffIDs)
 
-	size, err := i.Size(ctx)
+	size, err := usage.CalculateImageUsage(ctx, i, s.provider, usage.WithManifestLimit(s.platform, 1), usage.WithManifestUsage())
 	if err != nil {
 		return nil, fmt.Errorf("get image compressed resource size: %w", err)
 	}
 
-	desc, err := i.Config(ctx)
+	desc, err := i.Config(ctx, s.provider, s.platform)
 	if err != nil {
 		return nil, fmt.Errorf("get image config descriptor: %w", err)
 	}
-
 	id := desc.Digest.String()
 
-	spec, err := i.Spec(ctx)
+	blob, err := content.ReadBlob(ctx, s.provider, desc)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get OCI image spec: %w", err)
+		return nil, fmt.Errorf("read image config from content store: %w", err)
 	}
+
+	var spec imagespec.Image
+	if err := json.Unmarshal(blob, &spec); err != nil {
+		return nil, fmt.Errorf("unmarshal image config %s: %w", blob, err)
+	}
+
+	pinned := i.Labels[labels.PinnedImageLabelKey] == labels.PinnedImageLabelValue
 
 	return &Image{
 		ID:         id,
-		References: []string{i.Name()},
+		References: []string{i.Name},
 		ChainID:    chainID.String(),
 		Size:       size,
 		ImageSpec:  spec,
+		Pinned:     pinned,
 	}, nil
+
 }
 
 // Resolve resolves a image reference to image id.
@@ -172,9 +214,10 @@ func (s *Store) List() []Image {
 }
 
 type store struct {
-	lock      sync.RWMutex
-	images    map[string]Image
-	digestSet *digestset.Set
+	lock       sync.RWMutex
+	images     map[string]Image
+	digestSet  *digestset.Set
+	pinnedRefs map[string]sets.Set[string]
 }
 
 func (s *store) list() []Image {
@@ -199,6 +242,14 @@ func (s *store) add(img Image) error {
 		}
 	}
 
+	if img.Pinned {
+		if refs := s.pinnedRefs[img.ID]; refs == nil {
+			s.pinnedRefs[img.ID] = sets.New(img.References...)
+		} else {
+			refs.Insert(img.References...)
+		}
+	}
+
 	i, ok := s.images[img.ID]
 	if !ok {
 		// If the image doesn't exist, add it.
@@ -207,7 +258,75 @@ func (s *store) add(img Image) error {
 	}
 	// Or else, merge and sort the references.
 	i.References = docker.Sort(util.MergeStringSlices(i.References, img.References))
+	i.Pinned = i.Pinned || img.Pinned
 	s.images[img.ID] = i
+	return nil
+}
+
+func (s *store) isPinned(id, ref string) bool {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	digest, err := s.digestSet.Lookup(id)
+	if err != nil {
+		return false
+	}
+	refs := s.pinnedRefs[digest.String()]
+	return refs != nil && refs.Has(ref)
+}
+
+func (s *store) pin(id, ref string) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	digest, err := s.digestSet.Lookup(id)
+	if err != nil {
+		if err == digestset.ErrDigestNotFound {
+			err = errdefs.ErrNotFound
+		}
+		return err
+	}
+	i, ok := s.images[digest.String()]
+	if !ok {
+		return errdefs.ErrNotFound
+	}
+
+	if refs := s.pinnedRefs[digest.String()]; refs == nil {
+		s.pinnedRefs[digest.String()] = sets.New(ref)
+	} else {
+		refs.Insert(ref)
+	}
+	i.Pinned = true
+	s.images[digest.String()] = i
+	return nil
+}
+
+func (s *store) unpin(id, ref string) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	digest, err := s.digestSet.Lookup(id)
+	if err != nil {
+		if err == digestset.ErrDigestNotFound {
+			err = errdefs.ErrNotFound
+		}
+		return err
+	}
+	i, ok := s.images[digest.String()]
+	if !ok {
+		return errdefs.ErrNotFound
+	}
+
+	refs := s.pinnedRefs[digest.String()]
+	if refs == nil {
+		return nil
+	}
+	if refs.Delete(ref); len(refs) > 0 {
+		return nil
+	}
+
+	// delete unpinned image, we only need to keep the pinned
+	// entries in the map
+	delete(s.pinnedRefs, digest.String())
+	i.Pinned = false
+	s.images[digest.String()] = i
 	return nil
 }
 
@@ -242,10 +361,20 @@ func (s *store) delete(id, ref string) {
 	}
 	i.References = util.SubtractStringSlice(i.References, ref)
 	if len(i.References) != 0 {
+		if refs := s.pinnedRefs[digest.String()]; refs != nil {
+			if refs.Delete(ref); len(refs) == 0 {
+				i.Pinned = false
+				// delete unpinned image, we only need to keep the pinned
+				// entries in the map
+				delete(s.pinnedRefs, digest.String())
+			}
+		}
+
 		s.images[digest.String()] = i
 		return
 	}
 	// Remove the image if it is not referenced any more.
 	s.digestSet.Remove(digest)
 	delete(s.images, digest.String())
+	delete(s.pinnedRefs, digest.String())
 }

@@ -18,27 +18,35 @@ package v2
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	eventstypes "github.com/containerd/containerd/api/events"
-	"github.com/containerd/containerd/api/runtime/task/v2"
-	"github.com/containerd/containerd/api/types"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/events/exchange"
-	"github.com/containerd/containerd/identifiers"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/pkg/timeout"
-	"github.com/containerd/containerd/protobuf"
-	ptypes "github.com/containerd/containerd/protobuf/types"
-	"github.com/containerd/containerd/runtime"
-	client "github.com/containerd/containerd/runtime/v2/shim"
+	"github.com/containerd/containerd/v2/pkg/atomicfile"
+	"github.com/containerd/containerd/v2/pkg/dialer"
 	"github.com/containerd/ttrpc"
-	"github.com/hashicorp/go-multierror"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
+
+	eventstypes "github.com/containerd/containerd/v2/api/events"
+	task "github.com/containerd/containerd/v2/api/runtime/task/v3"
+	"github.com/containerd/containerd/v2/api/types"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/events/exchange"
+	"github.com/containerd/containerd/v2/identifiers"
+	"github.com/containerd/containerd/v2/pkg/timeout"
+	"github.com/containerd/containerd/v2/protobuf"
+	ptypes "github.com/containerd/containerd/v2/protobuf/types"
+	"github.com/containerd/containerd/v2/runtime"
+	client "github.com/containerd/containerd/v2/runtime/v2/shim"
+	"github.com/containerd/log"
 )
 
 const (
@@ -53,31 +61,10 @@ func init() {
 	timeout.Set(shutdownTimeout, 3*time.Second)
 }
 
-func loadAddress(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
-func loadShim(ctx context.Context, bundle *Bundle, onClose func()) (_ ShimInstance, err error) {
-	address, err := loadAddress(filepath.Join(bundle.Path, "address"))
-	if err != nil {
-		return nil, err
-	}
-	conn, err := client.Connect(address, client.AnonReconnectDialer)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err != nil {
-			conn.Close()
-		}
-	}()
+func loadShim(ctx context.Context, bundle *Bundle, onClose func()) (_ ShimInstance, retErr error) {
 	shimCtx, cancelShimLog := context.WithCancel(ctx)
 	defer func() {
-		if err != nil {
+		if retErr != nil {
 			cancelShimLog()
 		}
 	}()
@@ -86,7 +73,7 @@ func loadShim(ctx context.Context, bundle *Bundle, onClose func()) (_ ShimInstan
 		return nil, fmt.Errorf("open shim log pipe when reload: %w", err)
 	}
 	defer func() {
-		if err != nil {
+		if retErr != nil {
 			f.Close()
 		}
 	}()
@@ -109,23 +96,29 @@ func loadShim(ctx context.Context, bundle *Bundle, onClose func()) (_ ShimInstan
 		cancelShimLog()
 		f.Close()
 	}
-	client := ttrpc.NewClient(conn, ttrpc.WithOnClose(onCloseWithShimLog))
+
+	params, err := restoreBootstrapParams(bundle.Path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read boostrap.json when restoring bundle %q: %w", bundle.ID, err)
+	}
+
+	conn, err := makeConnection(ctx, bundle.ID, params, onCloseWithShimLog)
+	if err != nil {
+		return nil, fmt.Errorf("unable to make connection: %w", err)
+	}
+
 	defer func() {
-		if err != nil {
-			client.Close()
+		if retErr != nil {
+			conn.Close()
 		}
 	}()
+
 	shim := &shim{
-		bundle: bundle,
-		client: client,
+		bundle:  bundle,
+		client:  conn,
+		version: params.Version,
 	}
-	ctx, cancel := timeout.WithContext(ctx, loadTimeout)
-	defer cancel()
-	// Check connectivity, TaskService is the only required service, so create a temp one to check connection.
-	s := newShimTask(shim)
-	if _, err := s.PID(ctx); err != nil {
-		return nil, err
-	}
+
 	return shim, nil
 }
 
@@ -174,23 +167,201 @@ func cleanupAfterDeadShim(ctx context.Context, id string, rt *runtime.NSMap[Shim
 	})
 }
 
+// CurrentShimVersion is the latest shim version supported by containerd (e.g. TaskService v3).
+const CurrentShimVersion = 3
+
 // ShimInstance represents running shim process managed by ShimManager.
 type ShimInstance interface {
+	io.Closer
+
 	// ID of the shim.
 	ID() string
 	// Namespace of this shim.
 	Namespace() string
 	// Bundle is a file system path to shim's bundle.
 	Bundle() string
-	// Client returns the underlying TTRPC client for this shim.
-	Client() *ttrpc.Client
+	// Client returns the underlying TTRPC or GRPC client object for this shim.
+	// The underlying object can be either *ttrpc.Client or grpc.ClientConnInterface.
+	Client() any
 	// Delete will close the client and remove bundle from disk.
 	Delete(ctx context.Context) error
+	// Version returns shim's features compatibility version.
+	Version() int
+}
+
+func parseStartResponse(response []byte) (client.BootstrapParams, error) {
+	var params client.BootstrapParams
+
+	if err := json.Unmarshal(response, &params); err != nil || params.Version < 2 {
+		// Use TTRPC for legacy shims
+		params.Address = string(response)
+		params.Protocol = "ttrpc"
+		params.Version = 2
+	}
+
+	if params.Version > CurrentShimVersion {
+		return client.BootstrapParams{}, fmt.Errorf("unsupported shim version (%d): %w", params.Version, errdefs.ErrNotImplemented)
+	}
+
+	return params, nil
+}
+
+// writeBootstrapParams writes shim's bootstrap configuration (e.g. how to connect, version, etc).
+func writeBootstrapParams(path string, params client.BootstrapParams) error {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
+	data, err := json.Marshal(&params)
+	if err != nil {
+		return err
+	}
+
+	f, err := atomicfile.New(path, 0o666)
+	if err != nil {
+		return err
+	}
+
+	_, err = f.Write(data)
+	if err != nil {
+		f.Cancel()
+		return err
+	}
+
+	return f.Close()
+}
+
+func readBootstrapParams(path string) (client.BootstrapParams, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return client.BootstrapParams{}, err
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return client.BootstrapParams{}, err
+	}
+
+	return parseStartResponse(data)
+}
+
+// makeConnection creates a new TTRPC or GRPC connection object from address.
+// address can be either a socket path for TTRPC or JSON serialized BootstrapParams.
+func makeConnection(ctx context.Context, id string, params client.BootstrapParams, onClose func()) (_ io.Closer, retErr error) {
+	log.G(ctx).WithFields(log.Fields{
+		"address":  params.Address,
+		"protocol": params.Protocol,
+		"version":  params.Version,
+	}).Infof("connecting to shim %s", id)
+
+	switch strings.ToLower(params.Protocol) {
+	case "ttrpc":
+		conn, err := client.Connect(params.Address, client.AnonReconnectDialer)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create TTRPC connection: %w", err)
+		}
+		defer func() {
+			if retErr != nil {
+				conn.Close()
+			}
+		}()
+
+		return ttrpc.NewClient(conn, ttrpc.WithOnClose(onClose)), nil
+	case "grpc":
+		ctx, cancel := context.WithTimeout(ctx, time.Second*100)
+		defer cancel()
+
+		gopts := []grpc.DialOption{
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithBlock(),
+		}
+		return grpcDialContext(ctx, params.Address, onClose, gopts...)
+	default:
+		return nil, fmt.Errorf("unexpected protocol: %q", params.Protocol)
+	}
+}
+
+// grpcDialContext and the underlying grpcConn type exist solely
+// so we can have something similar to ttrpc.WithOnClose to have
+// a callback run when the connection is severed or explicitly closed.
+func grpcDialContext(
+	ctx context.Context,
+	address string,
+	onClose func(),
+	gopts ...grpc.DialOption,
+) (*grpcConn, error) {
+	// If grpc.WithBlock is specified in gopts this causes the connection to block waiting for
+	// a connection regardless of if the socket exists or has a listener when Dial begins. This
+	// specific behavior of WithBlock is mostly undesirable for shims, as if the socket isn't
+	// there when we go to load/connect there's likely an issue. However, getting rid of WithBlock is
+	// also undesirable as we don't want the background connection behavior, we want to ensure
+	// a connection before moving on. To bring this in line with the ttrpc connection behavior
+	// lets do an initial dial to ensure the shims socket is actually available. stat wouldn't suffice
+	// here as if the shim exited unexpectedly its socket may still be on the filesystem, but it'd return
+	// ECONNREFUSED which grpc.DialContext will happily trudge along through for the full timeout.
+	//
+	// This is especially helpful on restart of containerd as if the shim died while containerd
+	// was down, we end up waiting the full timeout.
+	conn, err := net.DialTimeout("unix", address, time.Second*10)
+	if err != nil {
+		return nil, err
+	}
+	conn.Close()
+
+	target := dialer.DialAddress(address)
+	client, err := grpc.DialContext(ctx, target, gopts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GRPC connection: %w", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		gctx := context.Background()
+		sourceState := connectivity.Ready
+		for {
+			if client.WaitForStateChange(gctx, sourceState) {
+				state := client.GetState()
+				if state == connectivity.Idle || state == connectivity.Shutdown {
+					break
+				}
+				// Could be transient failure. Lets see if we can get back to a working
+				// state.
+				log.G(gctx).WithFields(log.Fields{
+					"state": state,
+					"addr":  target,
+				}).Warn("shim grpc connection unexpected state")
+				sourceState = state
+			}
+		}
+		onClose()
+		close(done)
+	}()
+
+	return &grpcConn{
+		ClientConn:  client,
+		onCloseDone: done,
+	}, nil
+}
+
+type grpcConn struct {
+	*grpc.ClientConn
+	onCloseDone chan struct{}
+}
+
+func (gc *grpcConn) UserOnCloseWait(ctx context.Context) error {
+	select {
+	case <-gc.onCloseDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type shim struct {
-	bundle *Bundle
-	client *ttrpc.Client
+	bundle  *Bundle
+	client  any
+	version int
 }
 
 var _ ShimInstance = (*shim)(nil)
@@ -198,6 +369,10 @@ var _ ShimInstance = (*shim)(nil)
 // ID of the shim/task
 func (s *shim) ID() string {
 	return s.bundle.ID
+}
+
+func (s *shim) Version() int {
+	return s.version
 }
 
 func (s *shim) Namespace() string {
@@ -208,29 +383,52 @@ func (s *shim) Bundle() string {
 	return s.bundle.Path
 }
 
-func (s *shim) Client() *ttrpc.Client {
+func (s *shim) Client() any {
 	return s.client
 }
 
-func (s *shim) Delete(ctx context.Context) error {
-	var (
-		result *multierror.Error
-	)
-
-	if err := s.client.Close(); err != nil {
-		result = multierror.Append(result, fmt.Errorf("failed to close ttrpc client: %w", err))
+// Close closes the underlying client connection.
+func (s *shim) Close() error {
+	if ttrpcClient, ok := s.client.(*ttrpc.Client); ok {
+		return ttrpcClient.Close()
 	}
 
-	if err := s.client.UserOnCloseWait(ctx); err != nil {
-		result = multierror.Append(result, fmt.Errorf("close wait error: %w", err))
+	if grpcClient, ok := s.client.(*grpcConn); ok {
+		return grpcClient.Close()
+	}
+
+	return nil
+}
+
+func (s *shim) Delete(ctx context.Context) error {
+	var result []error
+
+	if ttrpcClient, ok := s.client.(*ttrpc.Client); ok {
+		if err := ttrpcClient.Close(); err != nil {
+			result = append(result, fmt.Errorf("failed to close ttrpc client: %w", err))
+		}
+
+		if err := ttrpcClient.UserOnCloseWait(ctx); err != nil {
+			result = append(result, fmt.Errorf("close wait error: %w", err))
+		}
+	}
+
+	if grpcClient, ok := s.client.(*grpcConn); ok {
+		if err := grpcClient.Close(); err != nil {
+			result = append(result, fmt.Errorf("failed to close grpc client: %w", err))
+		}
+
+		if err := grpcClient.UserOnCloseWait(ctx); err != nil {
+			result = append(result, fmt.Errorf("close wait error: %w", err))
+		}
 	}
 
 	if err := s.bundle.Delete(); err != nil {
 		log.G(ctx).WithField("id", s.ID()).WithError(err).Error("failed to delete bundle")
-		result = multierror.Append(result, fmt.Errorf("failed to delete bundle: %w", err))
+		result = append(result, fmt.Errorf("failed to delete bundle: %w", err))
 	}
 
-	return result.ErrorOrNil()
+	return errors.Join(result...)
 }
 
 var _ runtime.Task = &shimTask{}
@@ -238,14 +436,19 @@ var _ runtime.Task = &shimTask{}
 // shimTask wraps shim process and adds task service client for compatibility with existing shim manager.
 type shimTask struct {
 	ShimInstance
-	task task.TaskService
+	task TaskServiceClient
 }
 
-func newShimTask(shim ShimInstance) *shimTask {
+func newShimTask(shim ShimInstance) (*shimTask, error) {
+	taskClient, err := NewTaskClient(shim.Client(), shim.Version())
+	if err != nil {
+		return nil, err
+	}
+
 	return &shimTask{
 		ShimInstance: shim,
-		task:         task.NewTaskClient(shim.Client()),
-	}
+		task:         taskClient,
+	}, nil
 }
 
 func (s *shimTask) Shutdown(ctx context.Context) error {
@@ -300,6 +503,12 @@ func (s *shimTask) delete(ctx context.Context, sandboxed bool, removeTask func(c
 	// If not, the shim has been delivered the exit and delete events.
 	// So we should remove the record and prevent duplicate events from
 	// ttrpc-callback-on-close.
+	//
+	// TODO: It's hard to guarantee that the event is unique and sent only
+	// once. The moby/moby should not rely on that assumption that there is
+	// only one exit event. The moby/moby should handle the duplicate events.
+	//
+	// REF: https://github.com/containerd/containerd/issues/4769
 	if shimErr == nil {
 		removeTask(ctx, s.ID())
 	}
@@ -308,7 +517,11 @@ func (s *shimTask) delete(ctx context.Context, sandboxed bool, removeTask func(c
 	// Let controller decide when to shutdown.
 	if !sandboxed {
 		if err := s.waitShutdown(ctx); err != nil {
-			log.G(ctx).WithField("id", s.ID()).WithError(err).Error("failed to shutdown shim task")
+			// FIXME(fuweid):
+			//
+			// If the error is context canceled, should we use context.TODO()
+			// to wait for it?
+			log.G(ctx).WithField("id", s.ID()).WithError(err).Error("failed to shutdown shim task and the shim might be leaked")
 		}
 	}
 
@@ -350,6 +563,7 @@ func (s *shimTask) Create(ctx context.Context, opts runtime.CreateOpts) (runtime
 		request.Rootfs = append(request.Rootfs, &types.Mount{
 			Type:    m.Type,
 			Source:  m.Source,
+			Target:  m.Target,
 			Options: m.Options,
 		})
 	}

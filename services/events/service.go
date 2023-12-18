@@ -20,27 +20,29 @@ import (
 	"context"
 	"fmt"
 
-	api "github.com/containerd/containerd/api/services/events/v1"
-	apittrpc "github.com/containerd/containerd/api/services/ttrpc/events/v1"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/events"
-	"github.com/containerd/containerd/events/exchange"
-	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/protobuf"
-	ptypes "github.com/containerd/containerd/protobuf/types"
+	api "github.com/containerd/containerd/v2/api/services/events/v1"
+	apittrpc "github.com/containerd/containerd/v2/api/services/ttrpc/events/v1"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/events"
+	"github.com/containerd/containerd/v2/events/exchange"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/containerd/v2/protobuf"
+	ptypes "github.com/containerd/containerd/v2/protobuf/types"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 	"github.com/containerd/ttrpc"
 	"google.golang.org/grpc"
 )
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.GRPCPlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.GRPCPlugin,
 		ID:   "events",
 		Requires: []plugin.Type{
-			plugin.EventPlugin,
+			plugins.EventPlugin,
 		},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			ep, err := ic.GetByID(plugin.EventPlugin, "exchange")
+			ep, err := ic.GetByID(plugins.EventPlugin, "exchange")
 			if err != nil {
 				return nil, err
 			}

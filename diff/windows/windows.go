@@ -28,32 +28,33 @@ import (
 	"time"
 
 	"github.com/Microsoft/go-winio"
-	"github.com/containerd/containerd/archive"
-	"github.com/containerd/containerd/archive/compression"
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/diff"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/labels"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/metadata"
-	"github.com/containerd/containerd/mount"
-	"github.com/containerd/containerd/pkg/epoch"
-	"github.com/containerd/containerd/platforms"
-	"github.com/containerd/containerd/plugin"
+	"github.com/containerd/containerd/v2/archive"
+	"github.com/containerd/containerd/v2/archive/compression"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/diff"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/labels"
+	"github.com/containerd/containerd/v2/metadata"
+	"github.com/containerd/containerd/v2/mount"
+	"github.com/containerd/containerd/v2/pkg/epoch"
+	"github.com/containerd/containerd/v2/platforms"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/log"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/sirupsen/logrus"
 )
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.DiffPlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.DiffPlugin,
 		ID:   "windows",
 		Requires: []plugin.Type{
-			plugin.MetadataPlugin,
+			plugins.MetadataPlugin,
 		},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			md, err := ic.Get(plugin.MetadataPlugin)
+			md, err := ic.GetSingle(plugins.MetadataPlugin)
 			if err != nil {
 				return nil, err
 			}
@@ -94,7 +95,7 @@ func (s windowsDiff) Apply(ctx context.Context, desc ocispec.Descriptor, mounts 
 	t1 := time.Now()
 	defer func() {
 		if err == nil {
-			log.G(ctx).WithFields(logrus.Fields{
+			log.G(ctx).WithFields(log.Fields{
 				"d":      time.Since(t1),
 				"digest": desc.Digest,
 				"size":   desc.Size,
@@ -295,7 +296,7 @@ func (s windowsDiff) Compare(ctx context.Context, lower, upper []mount.Mount, op
 		Digest:    info.Digest,
 	}
 
-	log.G(ctx).WithFields(logrus.Fields{
+	log.G(ctx).WithFields(log.Fields{
 		"d":     time.Since(t1),
 		"dgst":  desc.Digest,
 		"size":  desc.Size,
@@ -321,6 +322,7 @@ func mountsToLayerAndParents(mounts []mount.Mount) (string, []string, error) {
 		return "", nil, fmt.Errorf("number of mounts should always be 1 for Windows layers: %w", errdefs.ErrInvalidArgument)
 	}
 	mnt := mounts[0]
+
 	if mnt.Type != "windows-layer" {
 		// This is a special case error. When this is received the diff service
 		// will attempt the next differ in the chain which for Windows is the
@@ -333,6 +335,17 @@ func mountsToLayerAndParents(mounts []mount.Mount) (string, []string, error) {
 		return "", nil, err
 	}
 
+	if mnt.ReadOnly() {
+		if len(parentLayerPaths) == 0 {
+			// rootfs.CreateDiff creates a new, empty View to diff against,
+			// when diffing something with no parent.
+			// This makes perfect sense for a walking Diff, but for WCOW,
+			// we have to recognise this as "diff against nothing"
+			return "", nil, nil
+		}
+		// Ignore the dummy sandbox.
+		return parentLayerPaths[0], parentLayerPaths[1:], nil
+	}
 	return mnt.Source, parentLayerPaths, nil
 }
 
@@ -347,8 +360,16 @@ func mountPairToLayerStack(lower, upper []mount.Mount) ([]string, error) {
 		return nil, fmt.Errorf("Upper mount invalid: %w", err)
 	}
 
+	lowerLayer, lowerParentLayerPaths, err := mountsToLayerAndParents(lower)
+	if errdefs.IsNotImplemented(err) {
+		// Upper was a windows-layer, lower is not. We can't handle that.
+		return nil, fmt.Errorf("windowsDiff cannot diff a windows-layer against a non-windows-layer: %w", errdefs.ErrInvalidArgument)
+	} else if err != nil {
+		return nil, fmt.Errorf("Lower mount invalid: %w", err)
+	}
+
 	// Trivial case, diff-against-nothing
-	if len(lower) == 0 {
+	if lowerLayer == "" {
 		if len(upperParentLayerPaths) != 0 {
 			return nil, fmt.Errorf("windowsDiff cannot diff a layer with parents against a null layer: %w", errdefs.ErrInvalidArgument)
 		}
@@ -357,14 +378,6 @@ func mountPairToLayerStack(lower, upper []mount.Mount) ([]string, error) {
 
 	if len(upperParentLayerPaths) < 1 {
 		return nil, fmt.Errorf("windowsDiff cannot diff a layer with no parents against another layer: %w", errdefs.ErrInvalidArgument)
-	}
-
-	lowerLayer, lowerParentLayerPaths, err := mountsToLayerAndParents(lower)
-	if errdefs.IsNotImplemented(err) {
-		// Upper was a windows-layer, lower is not. We can't handle that.
-		return nil, fmt.Errorf("windowsDiff cannot diff a windows-layer against a non-windows-layer: %w", errdefs.ErrInvalidArgument)
-	} else if err != nil {
-		return nil, fmt.Errorf("Lower mount invalid: %w", err)
 	}
 
 	if upperParentLayerPaths[0] != lowerLayer {

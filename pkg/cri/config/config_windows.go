@@ -19,10 +19,9 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"time"
 
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/pkg/cri/streaming"
+	containerd "github.com/containerd/containerd/v2/client"
+	"k8s.io/kubelet/pkg/cri/streaming"
 )
 
 // DefaultConfig returns default configurations of cri plugin.
@@ -38,7 +37,6 @@ func DefaultConfig() PluginConfig {
 		ContainerdConfig: ContainerdConfig{
 			Snapshotter:        containerd.DefaultSnapshotter,
 			DefaultRuntimeName: "runhcs-wcow-process",
-			NoPivot:            false,
 			Runtimes: map[string]Runtime{
 				"runhcs-wcow-process": {
 					Type:                 "io.containerd.runhcs.v1",
@@ -75,7 +73,7 @@ func DefaultConfig() PluginConfig {
 			TLSKeyFile:  "",
 			TLSCertFile: "",
 		},
-		SandboxImage:              "registry.k8s.io/pause:3.8",
+		SandboxImage:              "registry.k8s.io/pause:3.9",
 		StatsCollectPeriod:        10,
 		MaxContainerLogLineSize:   16 * 1024,
 		MaxConcurrentDownloads:    3,
@@ -85,6 +83,7 @@ func DefaultConfig() PluginConfig {
 		ImageDecryption: ImageDecryption{
 			KeyModel: KeyModelNode,
 		},
-		ImagePullProgressTimeout: time.Minute.String(),
+		ImagePullProgressTimeout: defaultImagePullProgressTimeoutDuration.String(),
+		DrainExecSyncIOTimeout:   "0s",
 	}
 }

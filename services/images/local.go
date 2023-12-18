@@ -19,45 +19,61 @@ package images
 import (
 	"context"
 
-	eventstypes "github.com/containerd/containerd/api/events"
-	imagesapi "github.com/containerd/containerd/api/services/images/v1"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/events"
-	"github.com/containerd/containerd/gc"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/metadata"
-	"github.com/containerd/containerd/pkg/epoch"
-	"github.com/containerd/containerd/plugin"
-	ptypes "github.com/containerd/containerd/protobuf/types"
-	"github.com/containerd/containerd/services"
+	"github.com/containerd/log"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	eventstypes "github.com/containerd/containerd/v2/api/events"
+	imagesapi "github.com/containerd/containerd/v2/api/services/images/v1"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/events"
+	"github.com/containerd/containerd/v2/gc"
+	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/metadata"
+	"github.com/containerd/containerd/v2/pkg/deprecation"
+	"github.com/containerd/containerd/v2/pkg/epoch"
+	"github.com/containerd/containerd/v2/plugins"
+	ptypes "github.com/containerd/containerd/v2/protobuf/types"
+	"github.com/containerd/containerd/v2/services"
+	"github.com/containerd/containerd/v2/services/warning"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 )
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.ServicePlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.ServicePlugin,
 		ID:   services.ImagesService,
 		Requires: []plugin.Type{
-			plugin.MetadataPlugin,
-			plugin.GCPlugin,
+			plugins.EventPlugin,
+			plugins.MetadataPlugin,
+			plugins.GCPlugin,
+			plugins.WarningPlugin,
 		},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			m, err := ic.Get(plugin.MetadataPlugin)
+			m, err := ic.GetSingle(plugins.MetadataPlugin)
 			if err != nil {
 				return nil, err
 			}
-			g, err := ic.Get(plugin.GCPlugin)
+			g, err := ic.GetSingle(plugins.GCPlugin)
+			if err != nil {
+				return nil, err
+			}
+			ep, err := ic.GetSingle(plugins.EventPlugin)
+			if err != nil {
+				return nil, err
+			}
+			w, err := ic.GetSingle(plugins.WarningPlugin)
 			if err != nil {
 				return nil, err
 			}
 
 			return &local{
 				store:     metadata.NewImageStore(m.(*metadata.DB)),
-				publisher: ic.Events,
+				publisher: ep.(events.Publisher),
 				gc:        g.(gcScheduler),
+				warnings:  w.(warning.Service),
 			}, nil
 		},
 	})
@@ -71,6 +87,7 @@ type local struct {
 	store     images.Store
 	gc        gcScheduler
 	publisher events.Publisher
+	warnings  warning.Service
 }
 
 var _ imagesapi.ImagesClient = &local{}
@@ -126,6 +143,7 @@ func (l *local) Create(ctx context.Context, req *imagesapi.CreateImageRequest, _
 		return nil, err
 	}
 
+	l.emitSchema1DeprecationWarning(ctx, &image)
 	return &resp, nil
 
 }
@@ -164,13 +182,21 @@ func (l *local) Update(ctx context.Context, req *imagesapi.UpdateImageRequest, _
 		return nil, err
 	}
 
+	l.emitSchema1DeprecationWarning(ctx, &image)
 	return &resp, nil
 }
 
 func (l *local) Delete(ctx context.Context, req *imagesapi.DeleteImageRequest, _ ...grpc.CallOption) (*ptypes.Empty, error) {
 	log.G(ctx).WithField("name", req.Name).Debugf("delete image")
 
-	if err := l.store.Delete(ctx, req.Name); err != nil {
+	var opts []images.DeleteOpt
+	if req.Target != nil {
+		desc := descFromProto(req.Target)
+		opts = append(opts, images.DeleteTarget(&desc))
+	}
+
+	// Sync option handled here after event is published
+	if err := l.store.Delete(ctx, req.Name, opts...); err != nil {
 		return nil, errdefs.ToGRPC(err)
 	}
 
@@ -187,4 +213,16 @@ func (l *local) Delete(ctx context.Context, req *imagesapi.DeleteImageRequest, _
 	}
 
 	return &ptypes.Empty{}, nil
+}
+
+func (l *local) emitSchema1DeprecationWarning(ctx context.Context, image *images.Image) {
+	if image == nil {
+		return
+	}
+	dgst, ok := image.Labels[images.ConvertedDockerSchema1LabelKey]
+	if !ok {
+		return
+	}
+	log.G(ctx).WithField("name", image.Name).WithField("schema1digest", dgst).Warn("conversion from schema 1 images is deprecated")
+	l.warnings.Emit(ctx, deprecation.PullSchema1Image)
 }

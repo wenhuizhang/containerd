@@ -30,16 +30,17 @@ import (
 
 	"github.com/Microsoft/go-winio/pkg/security"
 	"github.com/Microsoft/hcsshim/ext4/tar2ext4"
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/diff"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/metadata"
-	"github.com/containerd/containerd/mount"
-	"github.com/containerd/containerd/plugin"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/diff"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/metadata"
+	"github.com/containerd/containerd/v2/mount"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/log"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -48,14 +49,14 @@ const (
 )
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.DiffPlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.DiffPlugin,
 		ID:   "windows-lcow",
 		Requires: []plugin.Type{
-			plugin.MetadataPlugin,
+			plugins.MetadataPlugin,
 		},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			md, err := ic.Get(plugin.MetadataPlugin)
+			md, err := ic.GetSingle(plugins.MetadataPlugin)
 			if err != nil {
 				return nil, err
 			}
@@ -99,7 +100,7 @@ func (s windowsLcowDiff) Apply(ctx context.Context, desc ocispec.Descriptor, mou
 	t1 := time.Now()
 	defer func() {
 		if err == nil {
-			log.G(ctx).WithFields(logrus.Fields{
+			log.G(ctx).WithFields(log.Fields{
 				"d":      time.Since(t1),
 				"digest": desc.Digest,
 				"size":   desc.Size,

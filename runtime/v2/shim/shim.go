@@ -18,6 +18,7 @@ package shim
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -29,15 +30,17 @@ import (
 	"runtime/debug"
 	"time"
 
-	shimapi "github.com/containerd/containerd/api/runtime/task/v2"
-	"github.com/containerd/containerd/events"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/pkg/shutdown"
-	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/protobuf"
-	"github.com/containerd/containerd/protobuf/proto"
-	"github.com/containerd/containerd/version"
+	shimapi "github.com/containerd/containerd/v2/api/runtime/task/v3"
+	"github.com/containerd/containerd/v2/events"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/containerd/v2/pkg/shutdown"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/containerd/v2/protobuf"
+	"github.com/containerd/containerd/v2/protobuf/proto"
+	"github.com/containerd/containerd/v2/version"
+	"github.com/containerd/log"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 	"github.com/containerd/ttrpc"
 	"github.com/sirupsen/logrus"
 )
@@ -50,11 +53,19 @@ type Publisher interface {
 
 // StartOpts describes shim start configuration received from containerd
 type StartOpts struct {
-	ID               string // TODO(2.0): Remove ID, passed directly to start for call symmetry
-	ContainerdBinary string // TODO(2.0): Remove ContainerdBinary, use the TTRPC_ADDRESS env to forward events
-	Address          string
-	TTRPCAddress     string
-	Debug            bool
+	Address      string
+	TTRPCAddress string
+	Debug        bool
+}
+
+// BootstrapParams is a JSON payload returned in stdout from shim.Start call.
+type BootstrapParams struct {
+	// Version is the version of shim parameters (expected 2 for shim v2)
+	Version int `json:"version"`
+	// Address is a address containerd should use to connect to shim.
+	Address string `json:"address"`
+	// Protocol is either TTRPC or GRPC.
+	Protocol string `json:"protocol"`
 }
 
 type StopStatus struct {
@@ -63,22 +74,10 @@ type StopStatus struct {
 	ExitedAt   time.Time
 }
 
-// Init func for the creation of a shim server
-// TODO(2.0): Remove init function
-type Init func(context.Context, string, Publisher, func()) (Shim, error)
-
-// Shim server interface
-// TODO(2.0): Remove unified shim interface
-type Shim interface {
-	shimapi.TaskService
-	Cleanup(ctx context.Context) (*shimapi.DeleteResponse, error)
-	StartShim(ctx context.Context, opts StartOpts) (string, error)
-}
-
 // Manager is the interface which manages the shim process
 type Manager interface {
 	Name() string
-	Start(ctx context.Context, id string, opts StartOpts) (string, error)
+	Start(ctx context.Context, id string, opts StartOpts) (BootstrapParams, error)
 	Stop(ctx context.Context, id string) (StopStatus, error)
 }
 
@@ -104,23 +103,14 @@ type Config struct {
 	NoSetupLogger bool
 }
 
-type ttrpcService interface {
+type TTRPCService interface {
 	RegisterTTRPC(*ttrpc.Server) error
 }
 
-type ttrpcServerOptioner interface {
-	ttrpcService
+type TTRPCServerOptioner interface {
+	TTRPCService
 
 	UnaryInterceptor() ttrpc.UnaryServerInterceptor
-}
-
-type taskService struct {
-	shimapi.TaskService
-}
-
-func (t taskService) RegisterTTRPC(server *ttrpc.Server) error {
-	shimapi.RegisterTaskService(server, t.TaskService)
-	return nil
 }
 
 var (
@@ -137,6 +127,9 @@ var (
 
 const (
 	ttrpcAddressEnv = "TTRPC_ADDRESS"
+	grpcAddressEnv  = "GRPC_ADDRESS"
+	namespaceEnv    = "NAMESPACE"
+	maxVersionEnv   = "MAX_SHIM_VERSION"
 )
 
 func parseFlags() {
@@ -177,7 +170,7 @@ func setLogger(ctx context.Context, id string) (context.Context, error) {
 		FullTimestamp:   true,
 	})
 	if debugFlag {
-		l.Logger.SetLevel(logrus.DebugLevel)
+		l.Logger.SetLevel(log.DebugLevel)
 	}
 	f, err := openLog(ctx, id)
 	if err != nil {
@@ -187,54 +180,8 @@ func setLogger(ctx context.Context, id string) (context.Context, error) {
 	return log.WithLogger(ctx, l), nil
 }
 
-// Run initializes and runs a shim server
-// TODO(2.0): Remove function
-func Run(name string, initFunc Init, opts ...BinaryOpts) {
-	var config Config
-	for _, o := range opts {
-		o(&config)
-	}
-
-	ctx := context.Background()
-	ctx = log.WithLogger(ctx, log.G(ctx).WithField("runtime", name))
-
-	if err := run(ctx, nil, initFunc, name, config); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %s", name, err)
-		os.Exit(1)
-	}
-}
-
-// TODO(2.0): Remove this type
-type shimToManager struct {
-	shim Shim
-	name string
-}
-
-func (stm shimToManager) Name() string {
-	return stm.name
-}
-
-func (stm shimToManager) Start(ctx context.Context, id string, opts StartOpts) (string, error) {
-	opts.ID = id
-	return stm.shim.StartShim(ctx, opts)
-}
-
-func (stm shimToManager) Stop(ctx context.Context, id string) (StopStatus, error) {
-	// shim must already have id
-	dr, err := stm.shim.Cleanup(ctx)
-	if err != nil {
-		return StopStatus{}, err
-	}
-	return StopStatus{
-		Pid:        int(dr.Pid),
-		ExitStatus: int(dr.ExitStatus),
-		ExitedAt:   protobuf.FromTimestamp(dr.ExitedAt),
-	}, nil
-}
-
-// RunManager initialzes and runs a shim server
-// TODO(2.0): Rename to Run
-func RunManager(ctx context.Context, manager Manager, opts ...BinaryOpts) {
+// Run initializes and runs a shim server.
+func Run(ctx context.Context, manager Manager, opts ...BinaryOpts) {
 	var config Config
 	for _, o := range opts {
 		o(&config)
@@ -242,13 +189,13 @@ func RunManager(ctx context.Context, manager Manager, opts ...BinaryOpts) {
 
 	ctx = log.WithLogger(ctx, log.G(ctx).WithField("runtime", manager.Name()))
 
-	if err := run(ctx, manager, nil, "", config); err != nil {
+	if err := run(ctx, manager, config); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %s", manager.Name(), err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, manager Manager, initFunc Init, name string, config Config) error {
+func run(ctx context.Context, manager Manager, config Config) error {
 	parseFlags()
 	if versionFlag {
 		fmt.Printf("%s:\n", filepath.Base(os.Args[0]))
@@ -288,37 +235,16 @@ func run(ctx context.Context, manager Manager, initFunc Init, name string, confi
 	ctx, sd := shutdown.WithShutdown(ctx)
 	defer sd.Shutdown()
 
-	if manager == nil {
-		service, err := initFunc(ctx, id, publisher, sd.Shutdown)
-		if err != nil {
-			return err
-		}
-		plugin.Register(&plugin.Registration{
-			Type: plugin.TTRPCPlugin,
-			ID:   "task",
-			Requires: []plugin.Type{
-				plugin.EventPlugin,
-			},
-			InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-				return taskService{service}, nil
-			},
-		})
-		manager = shimToManager{
-			shim: service,
-			name: name,
-		}
-	}
-
 	// Handle explicit actions
 	switch action {
 	case "delete":
-		if debugFlag {
-			logrus.SetLevel(logrus.DebugLevel)
-		}
-		logger := log.G(ctx).WithFields(logrus.Fields{
+		logger := log.G(ctx).WithFields(log.Fields{
 			"pid":       os.Getpid(),
 			"namespace": namespaceFlag,
 		})
+		if debugFlag {
+			logger.Logger.SetLevel(log.DebugLevel)
+		}
 		go reap(ctx, logger, signals)
 		ss, err := manager.Stop(ctx, id)
 		if err != nil {
@@ -343,13 +269,20 @@ func run(ctx context.Context, manager Manager, initFunc Init, name string, confi
 			Debug:        debugFlag,
 		}
 
-		address, err := manager.Start(ctx, id, opts)
+		params, err := manager.Start(ctx, id, opts)
 		if err != nil {
 			return err
 		}
-		if _, err := os.Stdout.WriteString(address); err != nil {
+
+		data, err := json.Marshal(&params)
+		if err != nil {
+			return fmt.Errorf("failed to marshal bootstrap params to json: %w", err)
+		}
+
+		if _, err := os.Stdout.Write(data); err != nil {
 			return err
 		}
+
 		return nil
 	}
 
@@ -360,8 +293,8 @@ func run(ctx context.Context, manager Manager, initFunc Init, name string, confi
 		}
 	}
 
-	plugin.Register(&plugin.Registration{
-		Type: plugin.InternalPlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.InternalPlugin,
 		ID:   "shutdown",
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
 			return sd, nil
@@ -369,8 +302,8 @@ func run(ctx context.Context, manager Manager, initFunc Init, name string, confi
 	})
 
 	// Register event plugin
-	plugin.Register(&plugin.Registration{
-		Type: plugin.EventPlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.EventPlugin,
 		ID:   "publisher",
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
 			return publisher, nil
@@ -379,28 +312,28 @@ func run(ctx context.Context, manager Manager, initFunc Init, name string, confi
 
 	var (
 		initialized   = plugin.NewPluginSet()
-		ttrpcServices = []ttrpcService{}
+		ttrpcServices = []TTRPCService{}
 
 		ttrpcUnaryInterceptors = []ttrpc.UnaryServerInterceptor{}
 	)
-	plugins := plugin.Graph(func(*plugin.Registration) bool { return false })
-	for _, p := range plugins {
-		id := p.URI()
-		log.G(ctx).WithField("type", p.Type).Infof("loading plugin %q...", id)
+
+	for _, p := range registry.Graph(func(*plugin.Registration) bool { return false }) {
+		pID := p.URI()
+		log.G(ctx).WithFields(log.Fields{"id": pID, "type": p.Type}).Info("loading plugin")
 
 		initContext := plugin.NewContext(
 			ctx,
-			p,
 			initialized,
-			// NOTE: Root is empty since the shim does not support persistent storage,
-			// shim plugins should make use state directory for writing files to disk.
-			// The state directory will be destroyed when the shim if cleaned up or
-			// on reboot
-			"",
-			bundlePath,
+			map[string]string{
+				// NOTE: Root is empty since the shim does not support persistent storage,
+				// shim plugins should make use state directory for writing files to disk.
+				// The state directory will be destroyed when the shim if cleaned up or
+				// on reboot
+				plugins.PropertyStateDir:     filepath.Join(bundlePath, p.URI()),
+				plugins.PropertyGRPCAddress:  addressFlag,
+				plugins.PropertyTTRPCAddress: ttrpcAddress,
+			},
 		)
-		initContext.Address = addressFlag
-		initContext.TTRPCAddress = ttrpcAddress
 
 		// load the plugin specific configuration if it is provided
 		// TODO: Read configuration passed into shim, or from state directory?
@@ -420,19 +353,19 @@ func run(ctx context.Context, manager Manager, initFunc Init, name string, confi
 		instance, err := result.Instance()
 		if err != nil {
 			if plugin.IsSkipPlugin(err) {
-				log.G(ctx).WithError(err).WithField("type", p.Type).Infof("skip loading plugin %q...", id)
+				log.G(ctx).WithFields(log.Fields{"id": pID, "type": p.Type, "error": err}).Info("skip loading plugin")
 				continue
 			}
-			return fmt.Errorf("failed to load plugin %s: %w", id, err)
+			return fmt.Errorf("failed to load plugin %s: %w", pID, err)
 		}
 
-		if src, ok := instance.(ttrpcService); ok {
-			logrus.WithField("id", id).Debug("registering ttrpc service")
+		if src, ok := instance.(TTRPCService); ok {
+			log.G(ctx).WithField("id", pID).Debug("registering ttrpc service")
 			ttrpcServices = append(ttrpcServices, src)
 
 		}
 
-		if src, ok := instance.(ttrpcServerOptioner); ok {
+		if src, ok := instance.(TTRPCServerOptioner); ok {
 			ttrpcUnaryInterceptors = append(ttrpcUnaryInterceptors, src.UnaryInterceptor())
 		}
 	}
@@ -454,7 +387,7 @@ func run(ctx context.Context, manager Manager, initFunc Init, name string, confi
 	}
 
 	if err := serve(ctx, server, signals, sd.Shutdown); err != nil {
-		if err != shutdown.ErrShutdown {
+		if !errors.Is(err, shutdown.ErrShutdown) {
 			return err
 		}
 	}
@@ -466,10 +399,10 @@ func run(ctx context.Context, manager Manager, initFunc Init, name string, confi
 	}
 
 	select {
-	case <-publisher.Done():
+	case <-sd.Done():
 		return nil
 	case <-time.After(5 * time.Second):
-		return errors.New("publisher not closed")
+		return errors.New("shim shutdown timeout")
 	}
 }
 
@@ -494,7 +427,7 @@ func serve(ctx context.Context, server *ttrpc.Server, signals chan os.Signal, sh
 			log.G(ctx).WithError(err).Fatal("containerd-shim: ttrpc server failure")
 		}
 	}()
-	logger := log.G(ctx).WithFields(logrus.Fields{
+	logger := log.G(ctx).WithFields(log.Fields{
 		"pid":       os.Getpid(),
 		"path":      path,
 		"namespace": namespaceFlag,
@@ -509,7 +442,7 @@ func serve(ctx context.Context, server *ttrpc.Server, signals chan os.Signal, sh
 	return reap(ctx, logger, signals)
 }
 
-func dumpStacks(logger *logrus.Entry) {
+func dumpStacks(logger *log.Entry) {
 	var (
 		buf       []byte
 		stackSize int

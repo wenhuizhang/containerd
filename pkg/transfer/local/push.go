@@ -22,12 +22,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/pkg/transfer"
-	"github.com/containerd/containerd/platforms"
-	"github.com/containerd/containerd/remotes"
+	"github.com/containerd/containerd/v2/content"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/pkg/transfer"
+	"github.com/containerd/containerd/v2/platforms"
+	"github.com/containerd/containerd/v2/remotes"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
@@ -37,13 +37,9 @@ func (ts *localTransferService) push(ctx context.Context, ig transfer.ImageGette
 		// TODO: Platform matching
 		if pushCtx.PlatformMatcher == nil {
 			if len(pushCtx.Platforms) > 0 {
-				var ps []ocispec.Platform
-				for _, platform := range pushCtx.Platforms {
-					p, err := platforms.Parse(platform)
-					if err != nil {
-						return fmt.Errorf("invalid platform %s: %w", platform, err)
-					}
-					ps = append(ps, p)
+				ps, err := platforms.ParseAll(pushCtx.Platforms)
+				if err != nil {
+					return err
 				}
 				pushCtx.PlatformMatcher = platforms.Any(ps...)
 			} else {
@@ -105,8 +101,7 @@ func (ts *localTransferService) push(ctx context.Context, ig transfer.ImageGette
 			wrapper = pushCtx.HandlerWrapper
 		}
 	*/
-
-	if err := remotes.PushContent(ctx, pusher, img.Target, ts.content, ts.limiter, matcher, wrapper); err != nil {
+	if err := remotes.PushContent(ctx, pusher, img.Target, ts.content, ts.limiterU, matcher, wrapper); err != nil {
 		return err
 	}
 	if tops.Progress != nil {

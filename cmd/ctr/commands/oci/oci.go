@@ -21,10 +21,10 @@ import (
 
 	"github.com/urfave/cli"
 
-	"github.com/containerd/containerd/cmd/ctr/commands"
-	"github.com/containerd/containerd/containers"
-	"github.com/containerd/containerd/oci"
-	"github.com/containerd/containerd/platforms"
+	"github.com/containerd/containerd/v2/cmd/ctr/commands"
+	"github.com/containerd/containerd/v2/containers"
+	"github.com/containerd/containerd/v2/oci"
+	"github.com/containerd/containerd/v2/platforms"
 )
 
 // Command is the parent for all OCI related tools under 'oci'
@@ -38,11 +38,11 @@ var Command = cli.Command{
 
 var defaultSpecCommand = cli.Command{
 	Name:  "spec",
-	Usage: "see the output of the default OCI spec",
+	Usage: "See the output of the default OCI spec",
 	Flags: []cli.Flag{
 		cli.StringFlag{
 			Name:  "platform",
-			Usage: "platform of the spec to print (Examples: 'linux/arm64', 'windows/amd64')",
+			Usage: "Platform of the spec to print (Examples: 'linux/arm64', 'windows/amd64')",
 		},
 	},
 	Action: func(context *cli.Context) error {

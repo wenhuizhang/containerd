@@ -17,19 +17,21 @@
 package sandbox
 
 import (
-	"github.com/containerd/containerd/metadata"
-	"github.com/containerd/containerd/plugin"
+	"github.com/containerd/containerd/v2/metadata"
+	"github.com/containerd/containerd/v2/plugins"
+	"github.com/containerd/plugin"
+	"github.com/containerd/plugin/registry"
 )
 
 func init() {
-	plugin.Register(&plugin.Registration{
-		Type: plugin.SandboxStorePlugin,
+	registry.Register(&plugin.Registration{
+		Type: plugins.SandboxStorePlugin,
 		ID:   "local",
 		Requires: []plugin.Type{
-			plugin.MetadataPlugin,
+			plugins.MetadataPlugin,
 		},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
-			m, err := ic.Get(plugin.MetadataPlugin)
+			m, err := ic.GetSingle(plugins.MetadataPlugin)
 			if err != nil {
 				return nil, err
 			}

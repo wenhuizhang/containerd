@@ -30,14 +30,14 @@ import (
 	"time"
 
 	"github.com/containerd/continuity/fs/fstest"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/containerd/containerd/mount"
-	"github.com/containerd/containerd/snapshots"
-	"github.com/containerd/containerd/snapshots/devmapper"
-	"github.com/containerd/containerd/snapshots/native"
-	"github.com/containerd/containerd/snapshots/overlay"
+	"github.com/containerd/containerd/v2/mount"
+	"github.com/containerd/containerd/v2/snapshots"
+	"github.com/containerd/containerd/v2/snapshots/devmapper"
+	"github.com/containerd/containerd/v2/snapshots/native"
+	"github.com/containerd/containerd/v2/snapshots/overlay"
+	"github.com/containerd/log"
 )
 
 var (
@@ -54,7 +54,9 @@ func init() {
 	flag.StringVar(&nativeRootPath, "native.rootPath", "", "Root dir for native snapshotter")
 
 	// Avoid mixing benchmark output and INFO messages
-	logrus.SetLevel(logrus.ErrorLevel)
+	if err := log.SetLevel("error"); err != nil {
+		panic(fmt.Sprintf("failed to set up log level: %v", err))
+	}
 }
 
 func BenchmarkNative(b *testing.B) {

@@ -23,12 +23,12 @@ import (
 	"syscall"
 	"time"
 
-	eventtypes "github.com/containerd/containerd/api/events"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/log"
-	containerstore "github.com/containerd/containerd/pkg/cri/store/container"
-	ctrdutil "github.com/containerd/containerd/pkg/cri/util"
-	"github.com/containerd/containerd/protobuf"
+	eventtypes "github.com/containerd/containerd/v2/api/events"
+	"github.com/containerd/containerd/v2/errdefs"
+	containerstore "github.com/containerd/containerd/v2/pkg/cri/store/container"
+	ctrdutil "github.com/containerd/containerd/v2/pkg/cri/util"
+	"github.com/containerd/containerd/v2/protobuf"
+	"github.com/containerd/log"
 
 	"github.com/moby/sys/signal"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
@@ -47,16 +47,14 @@ func (c *criService) StopContainer(ctx context.Context, r *runtime.StopContainer
 		return nil, err
 	}
 
-	if c.nri.isEnabled() {
-		sandbox, err := c.sandboxStore.Get(container.SandboxID)
-		if err != nil {
-			err = c.nri.stopContainer(ctx, nil, &container)
-		} else {
-			err = c.nri.stopContainer(ctx, &sandbox, &container)
-		}
-		if err != nil {
-			log.G(ctx).WithError(err).Error("NRI failed to stop container")
-		}
+	sandbox, err := c.sandboxStore.Get(container.SandboxID)
+	if err != nil {
+		err = c.nri.StopContainer(ctx, nil, &container)
+	} else {
+		err = c.nri.StopContainer(ctx, &sandbox, &container)
+	}
+	if err != nil {
+		log.G(ctx).WithError(err).Error("NRI failed to stop container")
 	}
 
 	i, err := container.Container.Info(ctx)
@@ -91,7 +89,7 @@ func (c *criService) stopContainer(ctx context.Context, container containerstore
 		}
 		// Don't return for unknown state, some cleanup needs to be done.
 		if state == runtime.ContainerState_CONTAINER_UNKNOWN {
-			return c.cleanupUnknownContainer(ctx, id, container, sandboxID)
+			return cleanupUnknownContainer(ctx, id, container, sandboxID, c)
 		}
 		return nil
 	}
@@ -106,7 +104,7 @@ func (c *criService) stopContainer(ctx context.Context, container containerstore
 			if !errdefs.IsNotFound(err) {
 				return fmt.Errorf("failed to wait for task for %q: %w", id, err)
 			}
-			return c.cleanupUnknownContainer(ctx, id, container, sandboxID)
+			return cleanupUnknownContainer(ctx, id, container, sandboxID, c)
 		}
 
 		exitCtx, exitCancel := context.WithCancel(context.Background())
@@ -135,7 +133,7 @@ func (c *criService) stopContainer(ctx context.Context, container containerstore
 			// default SIGTERM is still better than returning error and leaving
 			// the container unstoppable. (See issue #990)
 			// TODO(random-liu): Remove this logic when containerd 1.2 is deprecated.
-			image, err := c.imageStore.Get(container.ImageRef)
+			image, err := c.GetImage(container.ImageRef)
 			if err != nil {
 				if !errdefs.IsNotFound(err) {
 					return fmt.Errorf("failed to get image %q: %w", container.ImageRef, err)
@@ -209,7 +207,7 @@ func (c *criService) waitContainerStop(ctx context.Context, container containers
 }
 
 // cleanupUnknownContainer cleanup stopped container in unknown state.
-func (c *criService) cleanupUnknownContainer(ctx context.Context, id string, cntr containerstore.Container, sandboxID string) error {
+func cleanupUnknownContainer(ctx context.Context, id string, cntr containerstore.Container, sandboxID string, c *criService) error {
 	// Reuse handleContainerExit to do the cleanup.
 	return handleContainerExit(ctx, &eventtypes.TaskExit{
 		ContainerID: id,

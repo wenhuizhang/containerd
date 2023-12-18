@@ -17,8 +17,7 @@
 package server
 
 import (
-	metrics "github.com/docker/go-metrics"
-	prom "github.com/prometheus/client_golang/prometheus"
+	"github.com/docker/go-metrics"
 )
 
 var (
@@ -30,25 +29,21 @@ var (
 	sandboxRuntimeStopTimer   metrics.LabeledTimer
 	sandboxRemoveTimer        metrics.LabeledTimer
 
-	containerListTimer   metrics.Timer
-	containerRemoveTimer metrics.LabeledTimer
-	containerCreateTimer metrics.LabeledTimer
-	containerStopTimer   metrics.LabeledTimer
-	containerStartTimer  metrics.LabeledTimer
+	containerListTimer          metrics.Timer
+	containerRemoveTimer        metrics.LabeledTimer
+	containerCreateTimer        metrics.LabeledTimer
+	containerStopTimer          metrics.LabeledTimer
+	containerStartTimer         metrics.LabeledTimer
+	containerEventsDroppedCount metrics.Counter
 
 	networkPluginOperations        metrics.LabeledCounter
 	networkPluginOperationsErrors  metrics.LabeledCounter
 	networkPluginOperationsLatency metrics.LabeledTimer
-
-	imagePulls           metrics.LabeledCounter
-	inProgressImagePulls metrics.Gauge
-	//  pull duration / (image size / 1MBi)
-	imagePullThroughput prom.Histogram
 )
 
 func init() {
 	// these CRI metrics record latencies for successful operations around a sandbox and container's lifecycle.
-	ns := metrics.NewNamespace("containerd", "cri", nil)
+	ns := metrics.NewNamespace("containerd", "cri_sandboxed", nil)
 
 	sandboxListTimer = ns.NewTimer("sandbox_list", "time to list sandboxes")
 	sandboxCreateNetworkTimer = ns.NewTimer("sandbox_create_network", "time to create the network for a sandbox")
@@ -63,20 +58,11 @@ func init() {
 	containerCreateTimer = ns.NewLabeledTimer("container_create", "time to create a container", "runtime")
 	containerStopTimer = ns.NewLabeledTimer("container_stop", "time to stop a container", "runtime")
 	containerStartTimer = ns.NewLabeledTimer("container_start", "time to start a container", "runtime")
+	containerEventsDroppedCount = ns.NewCounter("container_events_dropped", "count container discarding event total from server start")
 
 	networkPluginOperations = ns.NewLabeledCounter("network_plugin_operations_total", "cumulative number of network plugin operations by operation type", "operation_type")
 	networkPluginOperationsErrors = ns.NewLabeledCounter("network_plugin_operations_errors_total", "cumulative number of network plugin operations by operation type", "operation_type")
 	networkPluginOperationsLatency = ns.NewLabeledTimer("network_plugin_operations_duration_seconds", "latency in seconds of network plugin operations. Broken down by operation type", "operation_type")
-
-	imagePulls = ns.NewLabeledCounter("image_pulls", "succeeded and failed counters", "status")
-	inProgressImagePulls = ns.NewGauge("in_progress_image_pulls", "in progress pulls", metrics.Total)
-	imagePullThroughput = prom.NewHistogram(
-		prom.HistogramOpts{
-			Name:    "image_pulling_throughput",
-			Help:    "image pull throughput",
-			Buckets: prom.DefBuckets,
-		},
-	)
 
 	metrics.Register(ns)
 }

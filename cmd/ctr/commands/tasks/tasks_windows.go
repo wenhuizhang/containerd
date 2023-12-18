@@ -23,9 +23,9 @@ import (
 	"time"
 
 	"github.com/containerd/console"
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/cio"
-	"github.com/containerd/containerd/log"
+	"github.com/containerd/containerd/v2/cio"
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/log"
 	"github.com/urfave/cli"
 )
 
@@ -82,6 +82,7 @@ func NewTask(ctx gocontext.Context, client *containerd.Client, container contain
 	return container.NewTask(ctx, ioCreator)
 }
 
-func getNewTaskOpts(_ *cli.Context) []containerd.NewTaskOpts {
+// GetNewTaskOpts resolves containerd.NewTaskOpts from cli.Context
+func GetNewTaskOpts(_ *cli.Context) []containerd.NewTaskOpts {
 	return nil
 }

@@ -22,11 +22,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/mount"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/pkg/cleanup"
+	"github.com/containerd/containerd/v2/errdefs"
+	"github.com/containerd/containerd/v2/mount"
+	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/containerd/v2/pkg/cleanup"
+	"github.com/containerd/containerd/v2/pkg/timeout"
+	"github.com/containerd/log"
 )
 
 func (m *ShimManager) loadExistingTasks(ctx context.Context) error {
@@ -83,7 +84,15 @@ func (m *ShimManager) loadShims(ctx context.Context) error {
 			return err
 		}
 		// fast path
-		bf, err := os.ReadDir(bundle.Path)
+		f, err := os.Open(bundle.Path)
+		if err != nil {
+			bundle.Delete()
+			log.G(ctx).WithError(err).Errorf("fast path read bundle path for %s", bundle.Path)
+			continue
+		}
+
+		bf, err := f.Readdirnames(-1)
+		f.Close()
 		if err != nil {
 			bundle.Delete()
 			log.G(ctx).WithError(err).Errorf("fast path read bundle path for %s", bundle.Path)
@@ -110,7 +119,7 @@ func (m *ShimManager) loadShims(ctx context.Context) error {
 			container, err := m.containers.Get(ctx, id)
 			if err != nil {
 				log.G(ctx).WithError(err).Errorf("loading container %s", id)
-				if err := mount.UnmountAll(filepath.Join(bundle.Path, "rootfs"), 0); err != nil {
+				if err := mount.UnmountRecursive(filepath.Join(bundle.Path, "rootfs"), 0); err != nil {
 					log.G(ctx).WithError(err).Errorf("failed to unmount of rootfs %s", id)
 				}
 				bundle.Delete()
@@ -133,7 +142,7 @@ func (m *ShimManager) loadShims(ctx context.Context) error {
 				ttrpcAddress: m.containerdTTRPCAddress,
 				schedCore:    m.schedCore,
 			})
-		instance, err := loadShim(ctx, bundle, func() {
+		shim, err := loadShimTask(ctx, bundle, func() {
 			log.G(ctx).WithField("id", id).Info("shim disconnected")
 
 			cleanupAfterDeadShim(cleanup.Background(ctx), id, m.shims, m.events, binaryCall)
@@ -141,10 +150,10 @@ func (m *ShimManager) loadShims(ctx context.Context) error {
 			m.shims.Delete(ctx, id)
 		})
 		if err != nil {
+			log.G(ctx).WithError(err).Errorf("unable to load shim %q", id)
 			cleanupAfterDeadShim(ctx, id, m.shims, m.events, binaryCall)
 			continue
 		}
-		shim := newShimTask(instance)
 
 		// There are 3 possibilities for the loaded shim here:
 		// 1. It could be a shim that is running a task.
@@ -169,21 +178,49 @@ func (m *ShimManager) loadShims(ctx context.Context) error {
 	return nil
 }
 
+func loadShimTask(ctx context.Context, bundle *Bundle, onClose func()) (_ *shimTask, retErr error) {
+	shim, err := loadShim(ctx, bundle, onClose)
+	if err != nil {
+		return nil, err
+	}
+	// Check connectivity, TaskService is the only required service, so create a temp one to check connection.
+	s, err := newShimTask(shim)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := timeout.WithContext(ctx, loadTimeout)
+	defer cancel()
+
+	if _, err := s.PID(ctx); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
 func (m *ShimManager) cleanupWorkDirs(ctx context.Context) error {
 	ns, err := namespaces.NamespaceRequired(ctx)
 	if err != nil {
 		return err
 	}
-	dirs, err := os.ReadDir(filepath.Join(m.root, ns))
+
+	f, err := os.Open(filepath.Join(m.root, ns))
 	if err != nil {
 		return err
 	}
-	for _, d := range dirs {
+	defer f.Close()
+
+	dirs, err := f.Readdirnames(-1)
+	if err != nil {
+		return err
+	}
+
+	for _, dir := range dirs {
 		// if the task was not loaded, cleanup and empty working directory
 		// this can happen on a reboot where /run for the bundle state is cleaned up
 		// but that persistent working dir is left
-		if _, err := m.shims.Get(ctx, d.Name()); err != nil {
-			path := filepath.Join(m.root, ns, d.Name())
+		if _, err := m.shims.Get(ctx, dir); err != nil {
+			path := filepath.Join(m.root, ns, dir)
 			if err := os.RemoveAll(path); err != nil {
 				log.G(ctx).WithError(err).Errorf("cleanup working dir %s", path)
 			}
